@@ -28,6 +28,11 @@ function readVarintStream(bytes: Uint8Array): number[] {
     const b = bytes[i];
     value += (b & 0x7f) * Math.pow(2, shift);
     shift += 7;
+    if (shift > 35) {
+      // Max valid uint32 LEB128 is 5 bytes (shift values 0,7,14,21,28).
+      // shift > 35 means we're on byte 6+ of a single varint — malformed.
+      throw new Error("varint > 5 bytes: stream not uint32-compatible");
+    }
     if ((b & 0x80) === 0) {
       out.push(value);
       value = 0;
@@ -37,12 +42,20 @@ function readVarintStream(bytes: Uint8Array): number[] {
   return out;
 }
 
+/**
+ * Encode hashes as raw LEB128 varint bytes (no compression).
+ * This is the canonical wire-format primitive; exposed for cross-language
+ * byte-compatibility tests against the Python codec.
+ */
+export function toVarintBytes(hashes: number[]): Uint8Array {
+  const buf: number[] = [];
+  for (const h of hashes) writeVarint(buf, h >>> 0);
+  return new Uint8Array(buf);
+}
+
 export async function encodeZstdVarint(hashes: number[]): Promise<Uint8Array> {
   await initCodec();
-  const varintBuf: number[] = [];
-  for (const h of hashes) writeVarint(varintBuf, h >>> 0);
-  const compressed = compress(new Uint8Array(varintBuf), 11); // compression level 11
-  return compressed;
+  return compress(toVarintBytes(hashes), 11); // compression level 11
 }
 
 export async function decodeZstdVarint(blob: Uint8Array): Promise<number[]> {

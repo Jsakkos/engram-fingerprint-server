@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { encodeZstdVarint, decodeZstdVarint, initCodec } from "../src/codec";
+import { encodeZstdVarint, decodeZstdVarint, initCodec, toVarintBytes } from "../src/codec";
 
 describe("codec", () => {
   beforeAll(async () => {
@@ -32,5 +32,35 @@ describe("codec", () => {
     const encoded = await encodeZstdVarint(input);
     const decoded = await decodeZstdVarint(encoded);
     expect(decoded).toEqual(input);
+  });
+
+  it("toVarintBytes — known LEB128 encoding for [42, 100, 255, 256]", () => {
+    // 42 = 0x2a (1 byte)
+    // 100 = 0x64 (1 byte)
+    // 255 = 0xff 0x01 (2 bytes — LEB128 encoding)
+    // 256 = 0x80 0x02 (2 bytes — LEB128 encoding)
+    const bytes = toVarintBytes([42, 100, 255, 256]);
+    expect(Array.from(bytes)).toEqual([0x2a, 0x64, 0xff, 0x01, 0x80, 0x02]);
+  });
+
+  it("toVarintBytes — uint32 max value encodes as 5 bytes", () => {
+    // 4294967295 = 0xffffffff = 11111111 11111111 11111111 11111111
+    // LEB128: 0xff 0xff 0xff 0xff 0x0f (5 bytes, last byte's high bit = 0)
+    const bytes = toVarintBytes([4294967295]);
+    expect(Array.from(bytes)).toEqual([0xff, 0xff, 0xff, 0xff, 0x0f]);
+  });
+
+  it("toVarintBytes — empty array produces empty bytes", () => {
+    expect(toVarintBytes([]).byteLength).toBe(0);
+  });
+
+  it("readVarintStream throws on varint > 5 bytes (malformed for uint32)", async () => {
+    // 6 bytes all with continuation bit set — not a valid uint32 LEB128
+    const malformed = new Uint8Array([0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01]);
+    // We test via decodeZstdVarint by hand-compressing the malformed varint stream first
+    await initCodec();
+    const { compress } = await import("@bokuweb/zstd-wasm");
+    const compressed = compress(malformed, 11);
+    await expect(decodeZstdVarint(compressed)).rejects.toThrow(/varint > 5 bytes/);
   });
 });
