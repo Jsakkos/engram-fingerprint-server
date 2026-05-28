@@ -1,24 +1,18 @@
 import { ContributionRequestSchema } from "../schemas";
 import { insertContribution, getContributor } from "../db";
+import { decodeZstdVarint } from "../codec";
+import { screenAntiPoison, recordOverlapObservation } from "../db_anti_poison";
 
 export async function handleContribute(request: Request, env: Env): Promise<Response> {
   let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return new Response("invalid JSON", { status: 400 });
-  }
+  try { body = await request.json(); } catch { return new Response("invalid JSON", { status: 400 }); }
 
   const parsed = ContributionRequestSchema.safeParse(body);
   if (!parsed.success) {
-    return Response.json(
-      { error: "schema validation failed", details: parsed.error.flatten() },
-      { status: 400 },
-    );
+    return Response.json({ error: "schema validation failed", details: parsed.error.flatten() }, { status: 400 });
   }
   const req = parsed.data;
 
-  // Shadowban check (step 3 of anti-poison algorithm)
   const contributor = await getContributor(env.DB, req.pseudonym);
   if (contributor?.flagged === 1) {
     return Response.json(
@@ -27,7 +21,6 @@ export async function handleContribute(request: Request, env: Env): Promise<Resp
     );
   }
 
-  // Decode the wire-format fingerprint
   let fingerprintBytes: Uint8Array;
   let fingerprintSha256: Uint8Array;
   try {
@@ -37,16 +30,31 @@ export async function handleContribute(request: Request, env: Env): Promise<Resp
     return new Response("invalid base64", { status: 400 });
   }
 
-  // Anti-poison lands in Task S4.3 — placeholder pass.
+  let hashes: number[];
+  try {
+    hashes = await decodeZstdVarint(fingerprintBytes);
+  } catch {
+    return new Response("invalid zstd-varint payload", { status: 400 });
+  }
+
+  const screen = await screenAntiPoison(
+    env.DB, hashes, req.tmdb_id, req.season, req.episode,
+  );
+
+  // Exact-confirm lands in Task S4.4 — placeholder pass.
   const poisonCheck = "pass" as const;
 
   const result = await insertContribution(env.DB, req, fingerprintBytes, fingerprintSha256, poisonCheck);
+
+  if (!result.isDuplicate) {
+    await recordOverlapObservation(env.DB, result.contributionId, screen);
+  }
 
   return Response.json(
     {
       contribution_id: result.contributionId,
       poison_check: result.poisonCheck,
-      overlap_pct: 0, // computed in S4.3
+      overlap_pct: screen.maxOverlapEstimate,
     },
     { status: result.isDuplicate ? 200 : 202 },
   );
