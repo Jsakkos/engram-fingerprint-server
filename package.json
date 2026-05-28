@@ -19,6 +19,7 @@
     "wrangler": "^4.95.0"
   },
   "dependencies": {
+    "@bokuweb/zstd-wasm": "^0.0.27",
     "zod": "^3.23.8"
   }
 }
