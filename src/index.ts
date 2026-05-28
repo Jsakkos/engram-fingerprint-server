@@ -1,5 +1,6 @@
 import { handleContribute, type Env } from "./routes/contribute";
 import { handleForget } from "./routes/forget";
+import { runPromotion } from "./workers/promotion";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -19,5 +20,12 @@ export default {
     }
 
     return new Response("Not Found", { status: 404 });
+  },
+
+  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+    if (event.cron === "0 3 * * *") {
+      ctx.waitUntil(runPromotion(env));
+    }
+    // PackBuilder cron lands in Task S6.2
   },
 } satisfies ExportedHandler<Env>;
