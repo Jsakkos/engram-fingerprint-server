@@ -7,7 +7,7 @@ compatibility_flags = ["nodejs_compat"]
 [[d1_databases]]
 binding = "DB"
 database_name = "engram-fingerprint"
-database_id = "PLACEHOLDER_FILL_IN_AFTER_S1.2"
+database_id = "6d2bc3e1-aca7-4212-8160-fd668c866ffb"
 
 # R2 binding (created in Task S1.3)
 [[r2_buckets]]
