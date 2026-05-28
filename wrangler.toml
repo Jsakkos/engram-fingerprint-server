@@ -25,6 +25,5 @@ type = "CompiledWasm"
 globs = ["**/*.wasm"]
 fallthrough = true
 
-# Cron triggers added in Cluster S6
-# [triggers]
-# crons = ["0 3 * * *", "0 4 * * *"]
+[triggers]
+crons = ["0 3 * * *", "0 4 * * *"]
