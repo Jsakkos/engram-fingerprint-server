@@ -1,4 +1,5 @@
 import { handleContribute, type Env } from "./routes/contribute";
+import { handleForget } from "./routes/forget";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -9,6 +10,12 @@ export default {
         return new Response("Method Not Allowed", { status: 405 });
       }
       return handleContribute(request, env);
+    }
+    if (url.pathname === "/v1/forget") {
+      if (request.method !== "POST") {
+        return new Response("Method Not Allowed", { status: 405 });
+      }
+      return handleForget(request, env);
     }
 
     return new Response("Not Found", { status: 404 });
