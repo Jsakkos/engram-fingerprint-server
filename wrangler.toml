@@ -18,6 +18,13 @@ bucket_name = "engram-fp-packs"
 [vars]
 POISON_CONFLICT_THRESHOLD = "0.70"
 
+# WASM module rule: tells wrangler/Miniflare to serve .wasm files as CompiledWasm
+# modules so they can be imported directly rather than fetched via file://.
+[[rules]]
+type = "CompiledWasm"
+globs = ["**/*.wasm"]
+fallthrough = true
+
 # Cron triggers added in Cluster S6
 # [triggers]
 # crons = ["0 3 * * *", "0 4 * * *"]
