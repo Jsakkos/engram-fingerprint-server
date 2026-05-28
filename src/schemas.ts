@@ -1,0 +1,38 @@
+import { z } from "zod";
+import { MATCH_SOURCE_ALLOWLIST } from "./types";
+
+const UUIDv4 = z.string().regex(
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+  "pseudonym must be UUIDv4",
+);
+
+const Base64 = z.string().regex(/^[A-Za-z0-9+/]*={0,2}$/, "must be valid base64");
+
+export const ContributionRequestSchema = z.object({
+  wire_format_version: z.literal(1),
+  pseudonym: UUIDv4,
+  tmdb_id: z.number().int().positive(),
+  season: z.number().int().min(0).nullable(),
+  episode: z.number().int().min(0).nullable(),
+  fingerprint_b64: Base64,
+  fingerprint_sha256_b64: Base64,
+  disc_content_hash_b64: Base64.nullable(),
+  match_confidence: z.number().min(0).max(1),
+  match_source: z.enum(MATCH_SOURCE_ALLOWLIST),
+  client_version: z.string().min(1).max(100),
+});
+
+export const ContributionResponseSchema = z.object({
+  contribution_id: z.number().int(),
+  poison_check: z.enum(["pass", "flag_conflict", "flag_duplicate"]),
+  overlap_pct: z.number().min(0).max(1),
+});
+
+export const ForgetRequestSchema = z.object({
+  pseudonym: UUIDv4,
+});
+
+export const ForgetResponseSchema = z.object({
+  rows_deleted: z.number().int().min(0),
+  canonical_unaffected: z.literal(true),
+});
