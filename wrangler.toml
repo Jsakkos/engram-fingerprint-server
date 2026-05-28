@@ -1,0 +1,23 @@
+name = "engram-fp-prod"
+main = "src/index.ts"
+compatibility_date = "2026-05-27"
+compatibility_flags = ["nodejs_compat"]
+
+# D1 binding (created in Task S1.2)
+[[d1_databases]]
+binding = "DB"
+database_name = "engram-fingerprint"
+database_id = "PLACEHOLDER_FILL_IN_AFTER_S1.2"
+
+# R2 binding (created in Task S1.3)
+[[r2_buckets]]
+binding = "PACKS"
+bucket_name = "engram-fp-packs"
+
+# Anti-poison threshold (Q5 — tunable without redeploy)
+[vars]
+POISON_CONFLICT_THRESHOLD = "0.70"
+
+# Cron triggers added in Cluster S6
+# [triggers]
+# crons = ["0 3 * * *", "0 4 * * *"]
