@@ -1,7 +1,13 @@
 import { ContributionRequestSchema } from "../schemas";
 import { insertContribution, getContributor } from "../db";
 import { decodeZstdVarint } from "../codec";
-import { screenAntiPoison, recordOverlapObservation } from "../db_anti_poison";
+import {
+  screenAntiPoison,
+  recordOverlapObservation,
+  exactOverlap,
+  loadCanonicalFingerprint,
+  incrementFlagCount,
+} from "../db_anti_poison";
 
 export async function handleContribute(request: Request, env: Env): Promise<Response> {
   let body: unknown;
@@ -37,24 +43,47 @@ export async function handleContribute(request: Request, env: Env): Promise<Resp
     return new Response("invalid zstd-varint payload", { status: 400 });
   }
 
-  const screen = await screenAntiPoison(
-    env.DB, hashes, req.tmdb_id, req.season, req.episode,
-  );
+  const screen = await screenAntiPoison(env.DB, hashes, req.tmdb_id, req.season, req.episode);
 
-  // Exact-confirm lands in Task S4.4 — placeholder pass.
-  const poisonCheck = "pass" as const;
+  // Two-stage anti-poison: screen + exact confirm
+  const threshold = parseFloat(env.POISON_CONFLICT_THRESHOLD);
+  const screenThreshold = threshold - 0.10;
+  let poisonCheck: "pass" | "flag_conflict" = "pass";
+  let exactPct = screen.maxOverlapEstimate;
+
+  if (screen.maxOverlapEstimate > screenThreshold
+      && screen.targetTmdbId !== null
+      && screen.targetSeason !== null
+      && screen.targetEpisode !== null) {
+    const refHashes = await loadCanonicalFingerprint(
+      env.DB, screen.targetTmdbId, screen.targetSeason, screen.targetEpisode,
+    );
+    if (refHashes) {
+      exactPct = exactOverlap(hashes, refHashes);
+      if (exactPct > threshold) {
+        poisonCheck = "flag_conflict";
+      }
+    }
+  }
 
   const result = await insertContribution(env.DB, req, fingerprintBytes, fingerprintSha256, poisonCheck);
 
   if (!result.isDuplicate) {
-    await recordOverlapObservation(env.DB, result.contributionId, screen);
+    // Record observation with the exact pct (if we computed it), else the estimate.
+    await recordOverlapObservation(env.DB, result.contributionId, {
+      ...screen,
+      maxOverlapEstimate: exactPct,
+    });
+    if (poisonCheck === "flag_conflict") {
+      await incrementFlagCount(env.DB, req.pseudonym);
+    }
   }
 
   return Response.json(
     {
       contribution_id: result.contributionId,
-      poison_check: result.poisonCheck,
-      overlap_pct: screen.maxOverlapEstimate,
+      poison_check: result.poisonCheck === "flag_duplicate" ? "flag_duplicate" : poisonCheck,
+      overlap_pct: exactPct,
     },
     { status: result.isDuplicate ? 200 : 202 },
   );
