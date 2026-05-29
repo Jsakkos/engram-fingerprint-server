@@ -1,21 +1,28 @@
-import { ContributionRequestSchema } from "../schemas";
-import { insertContribution, getContributor } from "../db";
 import { decodeZstdVarint } from "../codec";
+import { getContributor, insertContribution } from "../db";
 import {
-  screenAntiPoison,
-  recordOverlapObservation,
   exactOverlap,
-  loadCanonicalFingerprint,
   incrementFlagCount,
+  loadCanonicalFingerprint,
+  recordOverlapObservation,
+  screenAntiPoison,
 } from "../db_anti_poison";
+import { ContributionRequestSchema } from "../schemas";
 
 export async function handleContribute(request: Request, env: Env): Promise<Response> {
   let body: unknown;
-  try { body = await request.json(); } catch { return new Response("invalid JSON", { status: 400 }); }
+  try {
+    body = await request.json();
+  } catch {
+    return new Response("invalid JSON", { status: 400 });
+  }
 
   const parsed = ContributionRequestSchema.safeParse(body);
   if (!parsed.success) {
-    return Response.json({ error: "schema validation failed", details: parsed.error.flatten() }, { status: 400 });
+    return Response.json(
+      { error: "schema validation failed", details: parsed.error.flatten() },
+      { status: 400 },
+    );
   }
   const req = parsed.data;
 
@@ -30,8 +37,8 @@ export async function handleContribute(request: Request, env: Env): Promise<Resp
   let fingerprintBytes: Uint8Array;
   let fingerprintSha256: Uint8Array;
   try {
-    fingerprintBytes = Uint8Array.from(atob(req.fingerprint_b64), c => c.charCodeAt(0));
-    fingerprintSha256 = Uint8Array.from(atob(req.fingerprint_sha256_b64), c => c.charCodeAt(0));
+    fingerprintBytes = Uint8Array.from(atob(req.fingerprint_b64), (c) => c.charCodeAt(0));
+    fingerprintSha256 = Uint8Array.from(atob(req.fingerprint_sha256_b64), (c) => c.charCodeAt(0));
   } catch {
     return new Response("invalid base64", { status: 400 });
   }
@@ -47,16 +54,21 @@ export async function handleContribute(request: Request, env: Env): Promise<Resp
 
   // Two-stage anti-poison: screen + exact confirm
   const threshold = parseFloat(env.POISON_CONFLICT_THRESHOLD);
-  const screenThreshold = threshold - 0.10;
+  const screenThreshold = threshold - 0.1;
   let poisonCheck: "pass" | "flag_conflict" = "pass";
   let exactPct = screen.maxOverlapEstimate;
 
-  if (screen.maxOverlapEstimate > screenThreshold
-      && screen.targetTmdbId !== null
-      && screen.targetSeason !== null
-      && screen.targetEpisode !== null) {
+  if (
+    screen.maxOverlapEstimate > screenThreshold &&
+    screen.targetTmdbId !== null &&
+    screen.targetSeason !== null &&
+    screen.targetEpisode !== null
+  ) {
     const refHashes = await loadCanonicalFingerprint(
-      env.DB, screen.targetTmdbId, screen.targetSeason, screen.targetEpisode,
+      env.DB,
+      screen.targetTmdbId,
+      screen.targetSeason,
+      screen.targetEpisode,
     );
     if (refHashes) {
       exactPct = exactOverlap(hashes, refHashes);
@@ -66,7 +78,13 @@ export async function handleContribute(request: Request, env: Env): Promise<Resp
     }
   }
 
-  const result = await insertContribution(env.DB, req, fingerprintBytes, fingerprintSha256, poisonCheck);
+  const result = await insertContribution(
+    env.DB,
+    req,
+    fingerprintBytes,
+    fingerprintSha256,
+    poisonCheck,
+  );
 
   if (!result.isDuplicate) {
     // Record observation with the exact pct (if we computed it), else the estimate.

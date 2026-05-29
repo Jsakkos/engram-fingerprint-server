@@ -1,10 +1,12 @@
 import { z } from "zod";
 import { MATCH_SOURCE_ALLOWLIST } from "./types";
 
-const UUIDv4 = z.string().regex(
-  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
-  "pseudonym must be UUIDv4",
-);
+const UUIDv4 = z
+  .string()
+  .regex(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    "pseudonym must be UUIDv4",
+  );
 
 const Base64 = z.string().regex(/^[A-Za-z0-9+/]*={0,2}$/, "must be valid base64");
 

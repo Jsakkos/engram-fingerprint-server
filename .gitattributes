@@ -1,0 +1,7 @@
+# Normalize line endings to LF in the repository across all platforms.
+# CI runs on Linux, so LF is the committed normal form; Windows checkouts
+# still work, but Biome and the toolchain stay consistent everywhere.
+* text=auto eol=lf
+
+# Treat WASM as binary (no EOL normalization, no diff).
+*.wasm binary

@@ -1,6 +1,6 @@
-import type { Env } from "./contribute";
 import { encodeZstdVarint } from "../codec";
 import { minhash128 } from "../minhash";
+import type { Env } from "./contribute";
 
 interface SeedEpisode {
   tmdb_id: number;
@@ -21,13 +21,17 @@ export async function handleDevSeed(request: Request, env: Env): Promise<Respons
        VALUES (?, ?, ?, 'canonical', ?, 3, 0.95, unixepoch())
        ON CONFLICT (tmdb_id, season, episode) DO UPDATE SET
          tier='canonical', fingerprint=excluded.fingerprint, promoted_at=excluded.promoted_at`,
-    ).bind(e.tmdb_id, e.season, e.episode, blob).run();
+    )
+      .bind(e.tmdb_id, e.season, e.episode, blob)
+      .run();
     await env.DB.prepare(
       `INSERT INTO canonical_sketch (tmdb_id, season, episode, sketch, hash_count, generated_at)
        VALUES (?, ?, ?, ?, ?, unixepoch())
        ON CONFLICT (tmdb_id, season, episode) DO UPDATE SET
          sketch=excluded.sketch, hash_count=excluded.hash_count, generated_at=excluded.generated_at`,
-    ).bind(e.tmdb_id, e.season, e.episode, sketch, e.hashes.length).run();
+    )
+      .bind(e.tmdb_id, e.season, e.episode, sketch, e.hashes.length)
+      .run();
     seeded++;
   }
   return Response.json({ seeded }, { status: 200 });

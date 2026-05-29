@@ -1,13 +1,15 @@
-import { describe, it, expect, beforeAll } from "vitest";
-import { SELF, env } from "cloudflare:test";
+import { SELF } from "cloudflare:test";
+import { beforeAll, describe, expect, it } from "vitest";
 import { encodeZstdVarint, initCodec } from "../src/codec";
 
-beforeAll(async () => { await initCodec(); });
+beforeAll(async () => {
+  await initCodec();
+});
 
 let cachedB64: string | null = null;
 async function getValidFingerprintB64(): Promise<string> {
   if (cachedB64) return cachedB64;
-  const encoded = await encodeZstdVarint([]);  // empty stream is the cheapest valid encoding
+  const encoded = await encodeZstdVarint([]); // empty stream is the cheapest valid encoding
   cachedB64 = btoa(String.fromCharCode(...encoded));
   return cachedB64;
 }

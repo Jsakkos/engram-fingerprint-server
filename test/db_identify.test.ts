@@ -1,5 +1,10 @@
-import { describe, it, expect } from "vitest";
-import { temporalCoherence, rarityWeightedOverlap, combinedScore, buildDfMap } from "../src/db_identify";
+import { describe, expect, it } from "vitest";
+import {
+  buildDfMap,
+  combinedScore,
+  rarityWeightedOverlap,
+  temporalCoherence,
+} from "../src/db_identify";
 
 describe("temporalCoherence", () => {
   it("is high for a contiguous run of members", () => {
@@ -24,7 +29,10 @@ describe("rarityWeightedOverlap", () => {
   });
   it("upweights rare hashes over common ones", () => {
     const ref = new Set([1, 2]);
-    const dfRare = new Map<number, number>([[1, 1], [2, 9]]);
+    const dfRare = new Map<number, number>([
+      [1, 1],
+      [2, 9],
+    ]);
     const onlyRare = rarityWeightedOverlap([1, 3], ref, dfRare, 10);
     const onlyCommon = rarityWeightedOverlap([2, 3], ref, dfRare, 10);
     expect(onlyRare).toBeGreaterThan(onlyCommon);
@@ -47,7 +55,10 @@ describe("edge cases", () => {
 
 describe("buildDfMap", () => {
   it("counts distinct presence per list (dedupes within a list)", async () => {
-    const df = await buildDfMap([[1, 1, 2], [2, 3]]);
+    const df = await buildDfMap([
+      [1, 1, 2],
+      [2, 3],
+    ]);
     expect(df.get(1)).toBe(1); // appears twice in list 1 -> df 1
     expect(df.get(2)).toBe(2); // in both lists
     expect(df.get(3)).toBe(1);

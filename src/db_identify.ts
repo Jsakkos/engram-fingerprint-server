@@ -73,15 +73,29 @@ export async function screenIdentify(
   topN = 8,
 ): Promise<{ tmdb_id: number; season: number; episode: number; tier: string; jaccard: number }[]> {
   const querySketch = minhash128(queryHashes);
-  const rows = await db.prepare(
-    `SELECT cs.tmdb_id, cs.season, cs.episode, ec.tier, cs.sketch
+  const rows = await db
+    .prepare(
+      `SELECT cs.tmdb_id, cs.season, cs.episode, ec.tier, cs.sketch
      FROM canonical_sketch cs
      JOIN episode_canonical ec
        ON ec.tmdb_id = cs.tmdb_id AND ec.season = cs.season AND ec.episode = cs.episode`,
-  ).all<{ tmdb_id: number; season: number; episode: number; tier: string; sketch: ArrayBuffer }>();
+    )
+    .all<{ tmdb_id: number; season: number; episode: number; tier: string; sketch: ArrayBuffer }>();
 
-  type DbRow = { tmdb_id: number; season: number; episode: number; tier: string; sketch: ArrayBuffer };
-  type ScoredRow = { tmdb_id: number; season: number; episode: number; tier: string; jaccard: number };
+  type DbRow = {
+    tmdb_id: number;
+    season: number;
+    episode: number;
+    tier: string;
+    sketch: ArrayBuffer;
+  };
+  type ScoredRow = {
+    tmdb_id: number;
+    season: number;
+    episode: number;
+    tier: string;
+    jaccard: number;
+  };
   const scored: ScoredRow[] = rows.results.map((r: DbRow) => ({
     tmdb_id: r.tmdb_id,
     season: r.season,
@@ -102,4 +116,3 @@ export async function buildDfMap(refHashesList: number[][]): Promise<Map<number,
   }
   return df;
 }
-

@@ -1,6 +1,10 @@
 import type { Env } from "./contribute";
 
-export async function handlePack(env: Env, tmdbId: number, ifNoneMatch: string | null): Promise<Response> {
+export async function handlePack(
+  env: Env,
+  tmdbId: number,
+  ifNoneMatch: string | null,
+): Promise<Response> {
   const obj = await env.PACKS.get(`${tmdbId}.zstd`);
   if (!obj) return new Response("Not Found", { status: 404 });
 

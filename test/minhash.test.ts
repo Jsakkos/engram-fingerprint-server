@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { minhash128, jaccardEstimate } from "../src/minhash";
+import { describe, expect, it } from "vitest";
+import { jaccardEstimate, minhash128 } from "../src/minhash";
 
 describe("minhash", () => {
   it("produces a 512-byte sketch (128 × uint32 LE)", () => {
@@ -26,8 +26,8 @@ describe("minhash", () => {
 
   it("jaccardEstimate within ±0.05 of true Jaccard for 50%-overlapping sets", () => {
     // Two sets sharing exactly half their elements
-    const setA = Array.from({ length: 200 }, (_, i) => i);            // 0..199
-    const setB = Array.from({ length: 200 }, (_, i) => i + 100);      // 100..299
+    const setA = Array.from({ length: 200 }, (_, i) => i); // 0..199
+    const setB = Array.from({ length: 200 }, (_, i) => i + 100); // 100..299
     // True Jaccard = |intersection| / |union| = 100 / 300 = 0.333
     const estA = jaccardEstimate(minhash128(setA), minhash128(setB));
     expect(estA).toBeGreaterThan(0.28);

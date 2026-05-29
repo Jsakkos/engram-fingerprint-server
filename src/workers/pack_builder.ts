@@ -1,4 +1,4 @@
-import { initCodec, decodeZstdVarint } from "../codec";
+import { decodeZstdVarint, initCodec } from "../codec";
 import type { Env } from "../routes/contribute";
 
 export async function runPackBuilder(env: Env): Promise<void> {
@@ -16,7 +16,9 @@ async function buildPack(env: Env, tmdb_id: number): Promise<void> {
     `SELECT season, episode, fingerprint FROM episode_canonical
      WHERE tmdb_id = ? AND tier = 'canonical'
      ORDER BY season, episode`,
-  ).bind(tmdb_id).all<{ season: number; episode: number; fingerprint: ArrayBuffer }>();
+  )
+    .bind(tmdb_id)
+    .all<{ season: number; episode: number; fingerprint: ArrayBuffer }>();
 
   if (eps.results.length === 0) return;
 

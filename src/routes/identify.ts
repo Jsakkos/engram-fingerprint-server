@@ -1,10 +1,14 @@
-import type { Env } from "./contribute";
 import { decodeZstdVarint } from "../codec";
 import { exactOverlap, loadCanonicalFingerprint } from "../db_anti_poison";
 import {
-  screenIdentify, temporalCoherence, rarityWeightedOverlap, combinedScore,
-  buildDfMap, type IdentifyCandidate,
+  buildDfMap,
+  combinedScore,
+  type IdentifyCandidate,
+  rarityWeightedOverlap,
+  screenIdentify,
+  temporalCoherence,
 } from "../db_identify";
+import type { Env } from "./contribute";
 
 const SCREEN_TOP_N = 8; // coarse MinHash candidates kept before exact scoring
 
@@ -34,7 +38,7 @@ export async function handleIdentify(request: Request, env: Env): Promise<Respon
   if (screened.length === 0) return Response.json({ candidates: [] }, { status: 200 });
 
   // Stage 2: exact-confirm each candidate; build a DF map over the candidate refs for rarity.
-  const refs: { cand: typeof screened[number]; hashes: number[] }[] = [];
+  const refs: { cand: (typeof screened)[number]; hashes: number[] }[] = [];
   for (const c of screened) {
     const refHashes = await loadCanonicalFingerprint(env.DB, c.tmdb_id, c.season, c.episode);
     if (refHashes) refs.push({ cand: c, hashes: refHashes });
@@ -47,8 +51,13 @@ export async function handleIdentify(request: Request, env: Env): Promise<Respon
     const temporal = temporalCoherence(queryHashes, refSet);
     const rarity = rarityWeightedOverlap(queryHashes, refSet, dfMap, refs.length);
     return {
-      tmdb_id: cand.tmdb_id, season: cand.season, episode: cand.episode, tier: cand.tier,
-      hash_overlap_pct: overlap, temporal_coherence: temporal, rarity_weighted_score: rarity,
+      tmdb_id: cand.tmdb_id,
+      season: cand.season,
+      episode: cand.episode,
+      tier: cand.tier,
+      hash_overlap_pct: overlap,
+      temporal_coherence: temporal,
+      rarity_weighted_score: rarity,
       combined_score: combinedScore(overlap, temporal, rarity),
     };
   });
@@ -57,7 +66,9 @@ export async function handleIdentify(request: Request, env: Env): Promise<Respon
   return Response.json(
     {
       candidates: candidates.slice(0, topK).map((c) => ({
-        tmdb_id: c.tmdb_id, season: c.season, episode: c.episode,
+        tmdb_id: c.tmdb_id,
+        season: c.season,
+        episode: c.episode,
         offset_seconds: null, // canonical fingerprints carry no offsets in Phase 3; populated in Phase 4
         hash_overlap_pct: c.hash_overlap_pct,
         rarity_weighted_score: c.rarity_weighted_score,

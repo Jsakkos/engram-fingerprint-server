@@ -1,10 +1,10 @@
-import { handleContribute, type Env } from "./routes/contribute";
+import { type Env, handleContribute } from "./routes/contribute";
 import { handleDevSeed } from "./routes/dev_seed";
 import { handleForget } from "./routes/forget";
 import { handleIdentify } from "./routes/identify";
 import { handlePack } from "./routes/pack";
-import { runPromotion } from "./workers/promotion";
 import { runPackBuilder } from "./workers/pack_builder";
+import { runPromotion } from "./workers/promotion";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -42,8 +42,8 @@ export default {
     return new Response("Not Found", { status: 404 });
   },
 
-  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
-    if (event.cron === "0 3 * * *") ctx.waitUntil(runPromotion(env));
-    if (event.cron === "0 4 * * *") ctx.waitUntil(runPackBuilder(env));
+  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    if (controller.cron === "0 3 * * *") ctx.waitUntil(runPromotion(env));
+    if (controller.cron === "0 4 * * *") ctx.waitUntil(runPackBuilder(env));
   },
 } satisfies ExportedHandler<Env>;
