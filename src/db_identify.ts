@@ -1,5 +1,4 @@
 import { jaccardEstimate, minhash128 } from "./minhash";
-import { decodeZstdVarint } from "./codec";
 
 export const W_RARITY = 0.5;
 export const W_OVERLAP = 0.3;
@@ -94,6 +93,7 @@ export async function screenIdentify(
   return scored.slice(0, topN);
 }
 
+// async (despite no awaits) so call sites can await it uniformly alongside DB helpers.
 /** Document-frequency map across a set of reference fingerprints (for rarity weighting). */
 export async function buildDfMap(refHashesList: number[][]): Promise<Map<number, number>> {
   const df = new Map<number, number>();
@@ -103,4 +103,3 @@ export async function buildDfMap(refHashesList: number[][]): Promise<Map<number,
   return df;
 }
 
-export { decodeZstdVarint };

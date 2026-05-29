@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { temporalCoherence, rarityWeightedOverlap, combinedScore } from "../src/db_identify";
+import { temporalCoherence, rarityWeightedOverlap, combinedScore, buildDfMap } from "../src/db_identify";
 
 describe("temporalCoherence", () => {
   it("is high for a contiguous run of members", () => {
@@ -13,7 +13,7 @@ describe("temporalCoherence", () => {
 });
 
 describe("rarityWeightedOverlap", () => {
-  it("collapses to plain overlap when df is uniform", () => {
+  it("collapses to plain overlap when all idf weights are equal", () => {
     const ref = new Set([1, 2, 3, 5, 6, 7]);
     const df = new Map([1, 2, 3, 5, 6, 7].map((h) => [h, 1] as [number, number]));
     expect(rarityWeightedOverlap([1, 2, 3, 4, 5, 6, 7, 8], ref, df, 10)).toBeCloseTo(0.75, 9);
@@ -35,5 +35,21 @@ describe("combinedScore", () => {
   it("weights rarity 0.5, overlap 0.3, temporal 0.2", () => {
     expect(combinedScore(0.75, 0.75, 0.75)).toBeCloseTo(0.75, 9);
     expect(combinedScore(1, 0, 0)).toBeCloseTo(0.3, 9);
+  });
+});
+
+describe("edge cases", () => {
+  it("returns 0 for empty query", () => {
+    expect(temporalCoherence([], new Set([1, 2, 3]))).toBe(0);
+    expect(rarityWeightedOverlap([], new Set([1, 2]), new Map(), 10)).toBe(0);
+  });
+});
+
+describe("buildDfMap", () => {
+  it("counts distinct presence per list (dedupes within a list)", async () => {
+    const df = await buildDfMap([[1, 1, 2], [2, 3]]);
+    expect(df.get(1)).toBe(1); // appears twice in list 1 -> df 1
+    expect(df.get(2)).toBe(2); // in both lists
+    expect(df.get(3)).toBe(1);
   });
 });
