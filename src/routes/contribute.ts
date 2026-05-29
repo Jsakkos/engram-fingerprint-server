@@ -93,4 +93,5 @@ export interface Env {
   DB: D1Database;
   PACKS: R2Bucket;
   POISON_CONFLICT_THRESHOLD: string;
+  ALLOW_DEV_SEED?: string;
 }

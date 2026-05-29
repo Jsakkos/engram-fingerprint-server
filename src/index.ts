@@ -1,4 +1,5 @@
 import { handleContribute, type Env } from "./routes/contribute";
+import { handleDevSeed } from "./routes/dev_seed";
 import { handleForget } from "./routes/forget";
 import { handleIdentify } from "./routes/identify";
 import { handlePack } from "./routes/pack";
@@ -31,6 +32,11 @@ export default {
     if (packMatch) {
       if (request.method !== "GET") return new Response("Method Not Allowed", { status: 405 });
       return handlePack(env, Number(packMatch[1]), request.headers.get("If-None-Match"));
+    }
+
+    if (url.pathname === "/v1/_dev/seed" && env.ALLOW_DEV_SEED === "1") {
+      if (request.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
+      return handleDevSeed(request, env);
     }
 
     return new Response("Not Found", { status: 404 });

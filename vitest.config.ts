@@ -8,6 +8,7 @@ export default defineWorkersConfig({
         miniflare: {
           d1Databases: ["DB"],
           r2Buckets: ["PACKS"],
+          bindings: { ALLOW_DEV_SEED: "1" },
         },
       },
     },
