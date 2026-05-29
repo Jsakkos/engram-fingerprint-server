@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
 import { env, SELF } from "cloudflare:test";
+import { describe, expect, it } from "vitest";
 
 describe("POST /v1/forget", () => {
   it("returns 400 on malformed pseudonym", async () => {
@@ -29,11 +29,15 @@ describe("POST /v1/forget", () => {
     await env.DB.prepare(
       `INSERT INTO contributor (pseudonym, first_seen, last_seen, contribution_count, flagged, flag_count)
        VALUES (?, unixepoch(), unixepoch(), 0, 0, 0)`,
-    ).bind(psn).run();
+    )
+      .bind(psn)
+      .run();
     await env.DB.prepare(
       `INSERT INTO contribution (pseudonym, tmdb_id, season, episode, fingerprint, fingerprint_sha256, match_confidence, match_source, client_version)
        VALUES (?, 99, 1, 1, ?, ?, 0.9, 'engram_asr', 'engram/0.9.2')`,
-    ).bind(psn, new Uint8Array([1, 2]), new Uint8Array([3, 4])).run();
+    )
+      .bind(psn, new Uint8Array([1, 2]), new Uint8Array([3, 4]))
+      .run();
 
     const res = await SELF.fetch("https://example.com/v1/forget", {
       method: "POST",
@@ -46,7 +50,9 @@ describe("POST /v1/forget", () => {
 
     const remaining = await env.DB.prepare(
       `SELECT COUNT(*) AS n FROM contribution WHERE pseudonym = ?`,
-    ).bind(psn).first<{ n: number }>();
+    )
+      .bind(psn)
+      .first<{ n: number }>();
     expect(remaining?.n).toBe(0);
   });
 });

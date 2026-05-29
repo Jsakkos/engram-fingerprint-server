@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { ContributionRequestSchema, ForgetRequestSchema } from "../src/schemas";
 
 describe("schemas", () => {
@@ -29,7 +29,9 @@ describe("schemas", () => {
   });
 
   it("rejects match_source outside the allowlist", () => {
-    expect(() => ContributionRequestSchema.parse({ ...valid, match_source: "engram_evil" })).toThrow();
+    expect(() =>
+      ContributionRequestSchema.parse({ ...valid, match_source: "engram_evil" }),
+    ).toThrow();
   });
 
   it("rejects match_confidence > 1.0", () => {
@@ -37,10 +39,14 @@ describe("schemas", () => {
   });
 
   it("accepts null season/episode for bootstrap movie contributions", () => {
-    expect(() => ContributionRequestSchema.parse({ ...valid, season: null, episode: null })).not.toThrow();
+    expect(() =>
+      ContributionRequestSchema.parse({ ...valid, season: null, episode: null }),
+    ).not.toThrow();
   });
 
   it("accepts ForgetRequest with valid UUID", () => {
-    expect(() => ForgetRequestSchema.parse({ pseudonym: "11111111-1111-4111-8111-111111111111" })).not.toThrow();
+    expect(() =>
+      ForgetRequestSchema.parse({ pseudonym: "11111111-1111-4111-8111-111111111111" }),
+    ).not.toThrow();
   });
 });

@@ -1,0 +1,25 @@
+version: 2
+updates:
+  # npm (pnpm) dependencies. Minor/patch updates are grouped into a single PR to
+  # cut noise; majors come through individually so they get a proper review.
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  # GitHub Actions used in the workflows above.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        update-types:
+          - minor
+          - patch
