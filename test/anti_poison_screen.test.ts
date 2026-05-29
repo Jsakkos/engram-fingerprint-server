@@ -1,9 +1,11 @@
-import { describe, it, expect, beforeAll } from "vitest";
 import { env, SELF } from "cloudflare:test";
-import { minhash128 } from "../src/minhash";
+import { beforeAll, describe, expect, it } from "vitest";
 import { encodeZstdVarint, initCodec } from "../src/codec";
+import { minhash128 } from "../src/minhash";
 
-beforeAll(async () => { await initCodec(); });
+beforeAll(async () => {
+  await initCodec();
+});
 
 async function seedCanonical(tmdbId: number, season: number, episode: number, hashes: number[]) {
   const encoded = await encodeZstdVarint(hashes);
@@ -11,17 +13,26 @@ async function seedCanonical(tmdbId: number, season: number, episode: number, ha
   await env.DB.prepare(
     `INSERT INTO episode_canonical (tmdb_id, season, episode, tier, fingerprint, unique_contributors, mean_confidence, promoted_at)
      VALUES (?, ?, ?, 'canonical', ?, 3, 0.9, unixepoch())`,
-  ).bind(tmdbId, season, episode, encoded).run();
+  )
+    .bind(tmdbId, season, episode, encoded)
+    .run();
   await env.DB.prepare(
     `INSERT INTO canonical_sketch (tmdb_id, season, episode, sketch, hash_count, generated_at)
      VALUES (?, ?, ?, ?, ?, unixepoch())`,
-  ).bind(tmdbId, season, episode, sketch, hashes.length).run();
+  )
+    .bind(tmdbId, season, episode, sketch, hashes.length)
+    .run();
 }
 
 describe("anti-poison fast path", () => {
   it("records overlap_observation on every contribution", async () => {
     // Seed a canonical for a DIFFERENT episode than the one we're contributing to.
-    await seedCanonical(99999, 5, 5, Array.from({ length: 200 }, (_, i) => i));
+    await seedCanonical(
+      99999,
+      5,
+      5,
+      Array.from({ length: 200 }, (_, i) => i),
+    );
 
     // Contribute a totally different fingerprint claiming a different episode.
     // (No exact-confirm in this task — just verify observation is recorded.)
@@ -35,7 +46,9 @@ describe("anti-poison fast path", () => {
       body: JSON.stringify({
         wire_format_version: 1,
         pseudonym: "44444444-4444-4444-8444-444444444444",
-        tmdb_id: 11111, season: 1, episode: 1,
+        tmdb_id: 11111,
+        season: 1,
+        episode: 1,
         fingerprint_b64: b64,
         fingerprint_sha256_b64: btoa(String.fromCharCode(...new Uint8Array(32))),
         disc_content_hash_b64: null,

@@ -1,5 +1,10 @@
-import { z } from "zod";
-import { ContributionRequestSchema, ContributionResponseSchema, ForgetRequestSchema, ForgetResponseSchema } from "./schemas";
+import type { z } from "zod";
+import type {
+  ContributionRequestSchema,
+  ContributionResponseSchema,
+  ForgetRequestSchema,
+  ForgetResponseSchema,
+} from "./schemas";
 
 export type ContributionRequest = z.infer<typeof ContributionRequestSchema>;
 export type ContributionResponse = z.infer<typeof ContributionResponseSchema>;

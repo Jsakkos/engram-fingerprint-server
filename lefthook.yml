@@ -1,0 +1,20 @@
+# Git hooks managed by lefthook. Installed automatically by the `prepare` npm
+# script (`lefthook install`) on `pnpm install`.
+#
+# Run manually:  pnpm exec lefthook run pre-commit
+# Skip once:     git commit --no-verify
+
+pre-commit:
+  parallel: true
+  jobs:
+    - name: biome
+      glob: "*.{ts,js,json,jsonc}"
+      run: pnpm exec biome check --write --no-errors-on-unmatched {staged_files}
+      stage_fixed: true
+
+pre-push:
+  jobs:
+    # `typecheck` runs `pretypecheck` first (wrangler types), so this works on a
+    # fresh clone without a manual type-generation step.
+    - name: typecheck
+      run: pnpm typecheck

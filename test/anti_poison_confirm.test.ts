@@ -1,9 +1,11 @@
-import { describe, it, expect, beforeAll } from "vitest";
 import { env, SELF } from "cloudflare:test";
+import { beforeAll, describe, expect, it } from "vitest";
 import { encodeZstdVarint, initCodec } from "../src/codec";
 import { minhash128 } from "../src/minhash";
 
-beforeAll(async () => { await initCodec(); });
+beforeAll(async () => {
+  await initCodec();
+});
 
 /**
  * Seed a canonical episode with a specific fingerprint, then submit a contribution
@@ -24,11 +26,15 @@ describe("anti-poison exact confirm", () => {
     await env.DB.prepare(
       `INSERT INTO episode_canonical (tmdb_id, season, episode, tier, fingerprint, unique_contributors, mean_confidence, promoted_at)
        VALUES (?, ?, ?, 'canonical', ?, 3, 0.9, unixepoch())`,
-    ).bind(77777, 1, 1, encoded).run();
+    )
+      .bind(77777, 1, 1, encoded)
+      .run();
     await env.DB.prepare(
       `INSERT INTO canonical_sketch (tmdb_id, season, episode, sketch, hash_count, generated_at)
        VALUES (?, ?, ?, ?, ?, unixepoch())`,
-    ).bind(77777, 1, 1, sketch, sharedHashes.length).run();
+    )
+      .bind(77777, 1, 1, sketch, sharedHashes.length)
+      .run();
 
     // Contribute claiming Show B, S2E2 with the SAME fingerprint.
     const b64 = btoa(String.fromCharCode(...encoded));
@@ -38,7 +44,9 @@ describe("anti-poison exact confirm", () => {
       body: JSON.stringify({
         wire_format_version: 1,
         pseudonym: PSEUDONYM,
-        tmdb_id: 88888, season: 2, episode: 2,
+        tmdb_id: 88888,
+        season: 2,
+        episode: 2,
         fingerprint_b64: b64,
         fingerprint_sha256_b64: btoa(String.fromCharCode(...new Uint8Array(32))),
         disc_content_hash_b64: null,
@@ -56,9 +64,9 @@ describe("anti-poison exact confirm", () => {
   });
 
   it("increments flag_count after flag_conflict", async () => {
-    const row = await env.DB.prepare(
-      `SELECT flag_count FROM contributor WHERE pseudonym = ?`,
-    ).bind(PSEUDONYM).first<{ flag_count: number }>();
+    const row = await env.DB.prepare(`SELECT flag_count FROM contributor WHERE pseudonym = ?`)
+      .bind(PSEUDONYM)
+      .first<{ flag_count: number }>();
     expect(row?.flag_count).toBeGreaterThan(0);
   });
 });

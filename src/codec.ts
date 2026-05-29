@@ -1,4 +1,4 @@
-import { init, compress, decompress } from "@bokuweb/zstd-wasm";
+import { compress, decompress, init } from "@bokuweb/zstd-wasm";
 // Import the shared emscripten Module object to install the instantiateWasm hook
 // before the emscripten runtime starts.  These paths bypass the package `exports`
 // field (which doesn't expose internal subpaths) using direct node_modules paths.
@@ -16,16 +16,15 @@ export async function initCodec(): Promise<void> {
       // Install the instantiateWasm hook BEFORE calling init().  When the hook is
       // present, the emscripten runtime calls it instead of fetching the .wasm file,
       // so the file:// URL never hits Miniflare's fetch API.
-      (Module as Record<string, unknown>)["instantiateWasm"] = (
+      (Module as Record<string, unknown>).instantiateWasm = (
         importObject: WebAssembly.Imports,
         receiveInstance: (instance: WebAssembly.Instance) => void,
       ) => {
-        WebAssembly.instantiate(
-          compiledWasm as unknown as WebAssembly.Module,
-          importObject,
-        ).then((instance) => {
-          receiveInstance(instance);
-        });
+        WebAssembly.instantiate(compiledWasm as unknown as WebAssembly.Module, importObject).then(
+          (instance) => {
+            receiveInstance(instance);
+          },
+        );
         // Return a truthy value so emscripten knows instantiation is in progress.
         return {};
       };
@@ -54,7 +53,7 @@ function readVarintStream(bytes: Uint8Array): number[] {
   let shift = 0;
   for (let i = 0; i < bytes.length; i++) {
     const b = bytes[i];
-    value += (b & 0x7f) * Math.pow(2, shift);
+    value += (b & 0x7f) * 2 ** shift;
     shift += 7;
     if (shift > 35) {
       // Max valid uint32 LEB128 is 5 bytes (shift values 0,7,14,21,28).
