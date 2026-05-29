@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ContributionRequestSchema, ForgetRequestSchema } from "../src/schemas";
+import { ContributionRequestSchema, ForgetRequestSchema, IdentifyResponseSchema } from "../src/schemas";
 
 describe("schemas", () => {
   const valid = {
@@ -42,5 +42,24 @@ describe("schemas", () => {
 
   it("accepts ForgetRequest with valid UUID", () => {
     expect(() => ForgetRequestSchema.parse({ pseudonym: "11111111-1111-4111-8111-111111111111" })).not.toThrow();
+  });
+});
+
+describe("IdentifyResponseSchema", () => {
+  it("accepts a well-formed identify response", () => {
+    const ok = IdentifyResponseSchema.safeParse({
+      candidates: [
+        { tmdb_id: 1, season: 1, episode: 1, offset_seconds: null,
+          hash_overlap_pct: 0.9, rarity_weighted_score: 0.8, tier: "canonical" },
+      ],
+    });
+    expect(ok.success).toBe(true);
+  });
+  it("rejects an out-of-range hash_overlap_pct", () => {
+    const bad = IdentifyResponseSchema.safeParse({
+      candidates: [{ tmdb_id: 1, season: 1, episode: 1, offset_seconds: null,
+        hash_overlap_pct: 1.5, rarity_weighted_score: 0.8, tier: "canonical" }],
+    });
+    expect(bad.success).toBe(false);
   });
 });
