@@ -1,5 +1,6 @@
 import { handleContribute, type Env } from "./routes/contribute";
 import { handleForget } from "./routes/forget";
+import { handleIdentify } from "./routes/identify";
 import { runPromotion } from "./workers/promotion";
 import { runPackBuilder } from "./workers/pack_builder";
 
@@ -18,6 +19,11 @@ export default {
         return new Response("Method Not Allowed", { status: 405 });
       }
       return handleForget(request, env);
+    }
+
+    if (url.pathname === "/v1/identify") {
+      if (request.method !== "GET") return new Response("Method Not Allowed", { status: 405 });
+      return handleIdentify(request, env);
     }
 
     return new Response("Not Found", { status: 404 });
