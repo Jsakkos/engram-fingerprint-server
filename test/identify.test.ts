@@ -39,16 +39,20 @@ describe("GET /v1/identify", () => {
     expect(data.candidates[0].tier).toBe("canonical");
   });
 
-  it("returns empty candidates or 400 for a garbage fingerprint (never 500)", async () => {
+  it("returns 400 for a garbage fingerprint (never 500)", async () => {
     const res = await SELF.fetch(`https://x.com/v1/identify?fp=!!!notbase64!!!&k=5`);
-    expect([200, 400]).toContain(res.status);
+    expect(res.status).toBe(400);
   });
 
-  it("honors top_k", async () => {
-    const res = await SELF.fetch(`https://x.com/v1/identify?fp=${b64url(await encodeZstdVarint([1, 2, 3]))}&k=1`);
+  it("honors top_k by truncating the candidate list", async () => {
+    const hashes = Array.from({ length: 240 }, (_, i) => 60000 + i);
+    await seedCanonical(79001, 2, 1, hashes);
+    await seedCanonical(79001, 2, 2, hashes); // second perfect match -> >=2 screened
+    const q = await encodeZstdVarint(hashes);
+    const res = await SELF.fetch(`https://x.com/v1/identify?fp=${b64url(q)}&k=1`);
     expect(res.status).toBe(200);
     const data = await res.json() as any;
-    expect(data.candidates.length).toBeLessThanOrEqual(1);
+    expect(data.candidates.length).toBe(1);
   });
 
   it("405s on non-GET", async () => {
