@@ -1,8 +1,10 @@
-import { describe, it, expect, beforeAll } from "vitest";
-import { SELF, env } from "cloudflare:test";
+import { env, SELF } from "cloudflare:test";
+import { beforeAll, describe, expect, it } from "vitest";
 import { encodeZstdVarint, initCodec } from "../src/codec";
 
-beforeAll(async () => { await initCodec(); });
+beforeAll(async () => {
+  await initCodec();
+});
 
 async function makeBody(overrides: Record<string, unknown> = {}) {
   const encoded = await encodeZstdVarint([1, 2, 3, 4, 5]);
@@ -39,17 +41,17 @@ describe("POST /v1/contribute — db insert + dedupe", () => {
     expect(json.contribution_id).toBeGreaterThan(0);
     expect(json.poison_check).toBe("pass");
 
-    const row = await env.DB.prepare(
-      "SELECT * FROM contribution WHERE id = ?",
-    ).bind(json.contribution_id).first();
+    const row = await env.DB.prepare("SELECT * FROM contribution WHERE id = ?")
+      .bind(json.contribution_id)
+      .first();
     expect(row).not.toBeNull();
   });
 
   it("upserts the contributor row", async () => {
     await post(await makeBody({ pseudonym: "22222222-2222-4222-8222-222222222222" }));
-    const row = await env.DB.prepare(
-      "SELECT * FROM contributor WHERE pseudonym = ?",
-    ).bind("22222222-2222-4222-8222-222222222222").first();
+    const row = await env.DB.prepare("SELECT * FROM contributor WHERE pseudonym = ?")
+      .bind("22222222-2222-4222-8222-222222222222")
+      .first();
     expect(row).not.toBeNull();
     expect((row as any).contribution_count).toBe(1);
   });

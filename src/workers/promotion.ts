@@ -15,7 +15,10 @@ export async function runPromotion(env: Env): Promise<void> {
 }
 
 async function promoteOne(
-  env: Env, tmdb_id: number, season: number | null, episode: number | null,
+  env: Env,
+  tmdb_id: number,
+  season: number | null,
+  episode: number | null,
 ): Promise<void> {
   // Pull contributions; group by pseudonym, keep most recent per pseudonym.
   const contribs = await env.DB.prepare(
@@ -30,10 +33,16 @@ async function promoteOne(
      ) latest ON c.pseudonym = latest.pseudonym AND c.received_at = latest.max_rcv
      WHERE c.tmdb_id = ? AND c.season IS ? AND c.episode IS ?
        AND c.promoted_at IS NULL AND c.poison_check = 'pass' AND c.match_confidence >= 0.70`,
-  ).bind(tmdb_id, season, episode, tmdb_id, season, episode).all<{
-    id: number; pseudonym: string; disc_content_hash: ArrayBuffer | null;
-    match_confidence: number; fingerprint: ArrayBuffer; received_at: number;
-  }>();
+  )
+    .bind(tmdb_id, season, episode, tmdb_id, season, episode)
+    .all<{
+      id: number;
+      pseudonym: string;
+      disc_content_hash: ArrayBuffer | null;
+      match_confidence: number;
+      fingerprint: ArrayBuffer;
+      received_at: number;
+    }>();
 
   if (contribs.results.length === 0) return;
 
@@ -50,11 +59,13 @@ async function promoteOne(
   }
 
   // Check if any contributor is flagged
-  const psnList = [...new Set(contribs.results.map(c => c.pseudonym))];
+  const psnList = [...new Set(contribs.results.map((c) => c.pseudonym))];
   if (psnList.length > 0) {
     const flagged = await env.DB.prepare(
       `SELECT pseudonym FROM contributor WHERE flagged = 1 AND pseudonym IN (${psnList.map(() => "?").join(",")})`,
-    ).bind(...psnList).all<{ pseudonym: string }>();
+    )
+      .bind(...psnList)
+      .all<{ pseudonym: string }>();
     for (const f of flagged.results) flaggedPseudonyms.add(f.pseudonym);
   }
 
@@ -96,7 +107,9 @@ async function promoteOne(
        unique_contributors = excluded.unique_contributors,
        mean_confidence = excluded.mean_confidence,
        promoted_at = excluded.promoted_at`,
-  ).bind(tmdb_id, season, episode, tier, consensusBlob, independentCount, meanConfidence).run();
+  )
+    .bind(tmdb_id, season, episode, tier, consensusBlob, independentCount, meanConfidence)
+    .run();
 
   // Upsert sketch (only on tier change OR new row — for simplicity, always upsert)
   const sketch = minhash128(consensusHashes);
@@ -105,11 +118,15 @@ async function promoteOne(
      VALUES (?, ?, ?, ?, ?, unixepoch())
      ON CONFLICT (tmdb_id, season, episode) DO UPDATE SET
        sketch = excluded.sketch, hash_count = excluded.hash_count, generated_at = excluded.generated_at`,
-  ).bind(tmdb_id, season, episode, sketch, consensusHashes.length).run();
+  )
+    .bind(tmdb_id, season, episode, sketch, consensusHashes.length)
+    .run();
 
   // Mark contributions promoted
-  const ids = contribs.results.map(c => c.id);
+  const ids = contribs.results.map((c) => c.id);
   await env.DB.prepare(
     `UPDATE contribution SET promoted_at = unixepoch() WHERE id IN (${ids.map(() => "?").join(",")})`,
-  ).bind(...ids).run();
+  )
+    .bind(...ids)
+    .run();
 }

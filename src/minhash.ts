@@ -29,7 +29,7 @@ export function minhash128(hashes: number[]): Uint8Array {
     for (let i = 0; i < NUM_HASHES; i++) {
       const { a, b } = COEFFS[i];
       // (a*hu + b) mod MOD — careful: JS number precision is fine for these magnitudes.
-      const v = ((a * hu) % MOD + b) % MOD;
+      const v = (((a * hu) % MOD) + b) % MOD;
       if (v < sketch[i]) sketch[i] = v;
     }
   }

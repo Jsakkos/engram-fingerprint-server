@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeAll } from "vitest";
-import { encodeZstdVarint, decodeZstdVarint, initCodec, toVarintBytes } from "../src/codec";
+import { beforeAll, describe, expect, it } from "vitest";
+import { decodeZstdVarint, encodeZstdVarint, initCodec, toVarintBytes } from "../src/codec";
 
 describe("codec", () => {
   beforeAll(async () => {
