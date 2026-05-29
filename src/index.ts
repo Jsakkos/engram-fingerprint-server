@@ -1,6 +1,7 @@
 import { handleContribute, type Env } from "./routes/contribute";
 import { handleForget } from "./routes/forget";
 import { handleIdentify } from "./routes/identify";
+import { handlePack } from "./routes/pack";
 import { runPromotion } from "./workers/promotion";
 import { runPackBuilder } from "./workers/pack_builder";
 
@@ -24,6 +25,12 @@ export default {
     if (url.pathname === "/v1/identify") {
       if (request.method !== "GET") return new Response("Method Not Allowed", { status: 405 });
       return handleIdentify(request, env);
+    }
+
+    const packMatch = url.pathname.match(/^\/v1\/pack\/(\d+)$/);
+    if (packMatch) {
+      if (request.method !== "GET") return new Response("Method Not Allowed", { status: 405 });
+      return handlePack(env, Number(packMatch[1]), request.headers.get("If-None-Match"));
     }
 
     return new Response("Not Found", { status: 404 });
