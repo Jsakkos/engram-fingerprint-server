@@ -66,6 +66,7 @@ describe("IdentifyResponseSchema", () => {
           offset_seconds: null,
           hash_overlap_pct: 0.9,
           rarity_weighted_score: 0.8,
+          combined_score: 0.85,
           tier: "canonical",
         },
       ],
@@ -82,10 +83,27 @@ describe("IdentifyResponseSchema", () => {
           offset_seconds: null,
           hash_overlap_pct: 1.5,
           rarity_weighted_score: 0.8,
+          combined_score: 0.85,
           tier: "canonical",
         },
       ],
     });
     expect(bad.success).toBe(false);
+  });
+  it("requires combined_score on each candidate", () => {
+    const missing = IdentifyResponseSchema.safeParse({
+      candidates: [
+        {
+          tmdb_id: 1,
+          season: 1,
+          episode: 1,
+          offset_seconds: null,
+          hash_overlap_pct: 0.9,
+          rarity_weighted_score: 0.8,
+          tier: "canonical",
+        },
+      ],
+    });
+    expect(missing.success).toBe(false);
   });
 });

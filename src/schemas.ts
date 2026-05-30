@@ -44,8 +44,9 @@ export const IdentifyCandidateSchema = z.object({
   season: z.number().int().min(0),
   episode: z.number().int().min(0),
   offset_seconds: z.number().nullable(),
-  hash_overlap_pct: z.number().min(0).max(1),
+  hash_overlap_pct: z.number().min(0).max(1), // EXACT membership fraction (issue #3) — not a confidence
   rarity_weighted_score: z.number().min(0).max(1),
+  combined_score: z.number().min(0).max(1), // server's ranking/gating signal; clients should threshold on this
   tier: z.enum(["candidate", "confirmed", "canonical"]),
 });
 
