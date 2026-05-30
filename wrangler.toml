@@ -14,9 +14,12 @@ database_id = "6d2bc3e1-aca7-4212-8160-fd668c866ffb"
 binding = "PACKS"
 bucket_name = "engram-fp-packs"
 
-# Anti-poison threshold (Q5 — tunable without redeploy)
+# Tunable thresholds (no redeploy needed to change).
+# IDENTIFY_MIN_SCORE: minimum combined_score for a /v1/identify candidate to be
+# returned — below it the server reports no confident match (issue #3).
 [vars]
 POISON_CONFLICT_THRESHOLD = "0.70"
+IDENTIFY_MIN_SCORE = "0.15"
 
 # WASM module rule: tells wrangler/Miniflare to serve .wasm files as CompiledWasm
 # modules so they can be imported directly rather than fetched via file://.

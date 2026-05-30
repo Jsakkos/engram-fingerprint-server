@@ -1,4 +1,4 @@
-import { initCodec } from "../codec";
+import { decodeZstdVarint, initCodec } from "../codec";
 import type { Env } from "../routes/contribute";
 
 export async function runPackBuilder(env: Env): Promise<void> {
@@ -22,26 +22,39 @@ async function buildPack(env: Env, tmdb_id: number): Promise<void> {
 
   if (eps.results.length === 0) return;
 
-  // Pack format (wire_format_version=1):
-  //   header JSON line: { wire_format_version, tmdb_id, n_episodes, generated_at }
+  // Pack format v2:
+  //   header JSON line: { wire_format_version, pack_format_version, tmdb_id, n_episodes, generated_at }
   //   then for each ep:  { season, episode, fingerprint_b64 } as one JSON line.
-  // Wrap the entire thing in zstd. Phase 3 will redesign this for streaming.
+  //   then a DF line:   { kind: "df", n_episodes, df: [[hash, count], ...] }
+  // Wrap the entire thing in zstd.
+  await initCodec();
+  // Build cross-episode document-frequency for rarity weighting (Phase 3).
+  const df = new Map<number, number>();
+  const decoded: { season: number; episode: number; fpB64: string }[] = [];
+  for (const e of eps.results) {
+    const bytes = new Uint8Array(e.fingerprint);
+    const hashes = await decodeZstdVarint(bytes);
+    for (const h of new Set(hashes)) df.set(h, (df.get(h) ?? 0) + 1);
+    decoded.push({
+      season: e.season,
+      episode: e.episode,
+      fpB64: btoa(String.fromCharCode(...bytes)),
+    });
+  }
+
   const header = JSON.stringify({
     wire_format_version: 1,
+    pack_format_version: 2,
     tmdb_id,
     n_episodes: eps.results.length,
     generated_at: Math.floor(Date.now() / 1000),
   });
-
   const lines = [header];
-  for (const e of eps.results) {
-    const fpB64 = btoa(String.fromCharCode(...new Uint8Array(e.fingerprint)));
-    lines.push(JSON.stringify({ season: e.season, episode: e.episode, fingerprint_b64: fpB64 }));
+  for (const e of decoded) {
+    lines.push(JSON.stringify({ season: e.season, episode: e.episode, fingerprint_b64: e.fpB64 }));
   }
+  lines.push(JSON.stringify({ kind: "df", n_episodes: eps.results.length, df: [...df.entries()] }));
   const raw = new TextEncoder().encode(lines.join("\n"));
-
-  // Use the same WASM-backed zstd as src/codec.ts.
-  await initCodec();
   const { compress } = await import("@bokuweb/zstd-wasm");
   const compressed = compress(raw, 11);
 

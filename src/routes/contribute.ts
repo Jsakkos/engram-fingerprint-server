@@ -52,7 +52,9 @@ export async function handleContribute(request: Request, env: Env): Promise<Resp
 
   const screen = await screenAntiPoison(env.DB, hashes, req.tmdb_id, req.season, req.episode);
 
-  // Two-stage anti-poison: screen + exact confirm
+  // Two-stage anti-poison: screen + exact confirm.
+  // exactOverlap is exact-membership only (issue #3), so this threshold governs
+  // verbatim hash overlap; independently re-decoded content may fall below it.
   const threshold = parseFloat(env.POISON_CONFLICT_THRESHOLD);
   const screenThreshold = threshold - 0.1;
   let poisonCheck: "pass" | "flag_conflict" = "pass";
@@ -111,4 +113,6 @@ export interface Env {
   DB: D1Database;
   PACKS: R2Bucket;
   POISON_CONFLICT_THRESHOLD: string;
+  IDENTIFY_MIN_SCORE?: string;
+  ALLOW_DEV_SEED?: string;
 }

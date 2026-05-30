@@ -17,7 +17,9 @@ export default defineWorkersConfig(async () => {
             d1Databases: ["DB"],
             r2Buckets: ["PACKS"],
             // Exposed to tests as env.TEST_MIGRATIONS (see test/setup.ts).
-            bindings: { TEST_MIGRATIONS: migrations },
+            // ALLOW_DEV_SEED enables the gated POST /v1/_dev/seed route under test
+            // (it is absent from wrangler.toml, so the route stays 404 in production).
+            bindings: { TEST_MIGRATIONS: migrations, ALLOW_DEV_SEED: "1" },
           },
         },
       },

@@ -38,3 +38,18 @@ export const ForgetResponseSchema = z.object({
   rows_deleted: z.number().int().min(0),
   canonical_unaffected: z.literal(true),
 });
+
+export const IdentifyCandidateSchema = z.object({
+  tmdb_id: z.number().int().positive(),
+  season: z.number().int().min(0),
+  episode: z.number().int().min(0),
+  offset_seconds: z.number().nullable(),
+  hash_overlap_pct: z.number().min(0).max(1), // EXACT membership fraction (issue #3) — not a confidence
+  rarity_weighted_score: z.number().min(0).max(1),
+  combined_score: z.number().min(0).max(1), // server's ranking/gating signal; clients should threshold on this
+  tier: z.enum(["candidate", "confirmed", "canonical"]),
+});
+
+export const IdentifyResponseSchema = z.object({
+  candidates: z.array(IdentifyCandidateSchema),
+});

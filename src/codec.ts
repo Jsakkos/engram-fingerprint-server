@@ -1,8 +1,8 @@
-import { compress, decompress, init } from "@bokuweb/zstd-wasm";
+import { compress, decompress } from "@bokuweb/zstd-wasm";
 // Import the shared emscripten Module object to install the instantiateWasm hook
 // before the emscripten runtime starts.  These paths bypass the package `exports`
 // field (which doesn't expose internal subpaths) using direct node_modules paths.
-import { Module } from "../node_modules/@bokuweb/zstd-wasm/dist/web/module";
+import { Module, waitInitialized } from "../node_modules/@bokuweb/zstd-wasm/dist/web/module";
 // Static import of the compiled WASM module (via [[rules]] CompiledWasm in wrangler.toml).
 // Miniflare/wrangler transforms this into a WebAssembly.Module, bypassing the
 // file:// fetch that Miniflare blocks in Worker isolates.
@@ -16,7 +16,7 @@ export async function initCodec(): Promise<void> {
       // Install the instantiateWasm hook BEFORE calling init().  When the hook is
       // present, the emscripten runtime calls it instead of fetching the .wasm file,
       // so the file:// URL never hits Miniflare's fetch API.
-      (Module as Record<string, unknown>).instantiateWasm = (
+      (Module as Record<string, unknown>)["instantiateWasm"] = (
         importObject: WebAssembly.Imports,
         receiveInstance: (instance: WebAssembly.Instance) => void,
       ) => {
@@ -28,9 +28,17 @@ export async function initCodec(): Promise<void> {
         // Return a truthy value so emscripten knows instantiation is in progress.
         return {};
       };
-      // Call the @bokuweb/zstd-wasm init() — this triggers the emscripten runtime
-      // which will use our instantiateWasm hook above.
-      await init();
+      // Drive the emscripten runtime directly instead of the package's init().
+      // That init() runs `new URL("./zstd.wasm", import.meta.url)` UNCONDITIONALLY
+      // as its first line, which throws "Invalid URL string" under `wrangler dev`
+      // (import.meta.url is not a valid base in that bundle). It only ever worked
+      // under vitest-pool-workers, where import.meta.url happens to be valid.
+      // The instantiateWasm hook above already supplies the compiled module, so
+      // that URL is never actually used — calling Module.init directly skips the
+      // throwing line while keeping the same wasm, same hook, and identical
+      // compress/decompress behavior.
+      Module["init"]("zstd.wasm");
+      await waitInitialized();
     })();
   }
   await zstdReady;
