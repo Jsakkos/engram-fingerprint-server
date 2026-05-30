@@ -10,11 +10,12 @@
 //   pnpm dashboard   ->   http://127.0.0.1:8788
 
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isSummaryResponse, parseWranglerJson, shapePayload } from "../dashboard/transform.mjs";
 
 const REPO_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const DASHBOARD_DIR = join(REPO_ROOT, "dashboard");
@@ -24,29 +25,6 @@ const PORT = Number(process.env.DASHBOARD_PORT) || 8788;
 const HOST = "127.0.0.1";
 const CACHE_TTL_MS = 30_000;
 const WRANGLER_TIMEOUT_MS = 30_000;
-
-// Maps each positional result set from queries.sql onto a named field.
-// Order MUST match the statement order in dashboard/queries.sql.
-const QUERY_MAP = [
-  "totalContributions", // [0]
-  "poisonBreakdown", // [1]
-  "unpromoted", // [2]
-  "tierBreakdown", // [3]
-  "totalEpisodes", // [4]
-  "distinctShows", // [5]
-  "showsWithCanonical", // [6]
-  "totalContributors", // [7]
-  "flaggedContributors", // [8]
-  "confidenceByTier", // [9]
-  "contributionsByDay", // [10]
-  "canonicalsByDay", // [11]
-  "contributorsByDay", // [12]
-  "matchSourceBreakdown", // [13]
-  "overlapStats", // [14]
-  "topShows", // [15]
-  "topContributors", // [16]
-  "recentContributions", // [17]
-];
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -85,8 +63,21 @@ function runWrangler(source) {
       });
       return;
     }
+    let sql;
+    try {
+      sql = readFileSync(QUERIES_FILE, "utf8");
+    } catch (err) {
+      res({ ok: false, error: `Could not read ${QUERIES_FILE}: ${err.message}` });
+      return;
+    }
     const flag = source === "remote" ? "--remote" : "--local";
-    const args = [entry, "d1", "execute", DB_NAME, flag, "--json", "--file", QUERIES_FILE];
+    // Pass the SQL via `--command=` rather than `--file`. Against REMOTE D1, a
+    // multi-statement `--file` returns only an execution summary (Total queries
+    // executed / Rows read) instead of the per-statement result sets, which makes
+    // every metric read as 0. The same statements via `--command` return real
+    // result sets on both local and remote. The `=` form is required so the SQL —
+    // which begins with a `-- comment` line — isn't mis-parsed as a CLI flag.
+    const args = [entry, "d1", "execute", DB_NAME, flag, "--json", `--command=${sql}`];
     const child = spawn(process.execPath, args, { cwd: REPO_ROOT });
 
     let stdout = "";
@@ -127,30 +118,19 @@ function runWrangler(source) {
         finish({ ok: false, error: "Could not parse wrangler JSON output." });
         return;
       }
+      if (isSummaryResponse(sets)) {
+        // Defends against a regression to `--file` (or a wrangler/D1 change) that
+        // makes remote return an execution summary instead of result sets — fail
+        // loudly rather than render a dashboard of silent zeros.
+        finish({
+          ok: false,
+          error: `wrangler returned an execution summary instead of result sets on ${source} — the queries must be sent via \`--command\`, not \`--file\`.`,
+        });
+        return;
+      }
       finish({ ok: true, data: shapePayload(sets) });
     });
   });
-}
-
-function parseWranglerJson(stdout) {
-  const tryParse = (text) => {
-    try {
-      return JSON.parse(text);
-    } catch {
-      return null;
-    }
-  };
-  // wrangler --json usually prints a clean array, but tolerate leading notices
-  // by extracting from the first "[" to the last "]".
-  let parsed = tryParse(stdout.trim());
-  if (!parsed) {
-    const start = stdout.indexOf("[");
-    const end = stdout.lastIndexOf("]");
-    if (start !== -1 && end > start) parsed = tryParse(stdout.slice(start, end + 1));
-  }
-  if (!Array.isArray(parsed)) return null;
-  // Each element is { results, success, meta } — normalise to just the rows.
-  return parsed.map((entry) => (Array.isArray(entry?.results) ? entry.results : entry));
 }
 
 function explainWranglerFailure(message, source, code) {
@@ -177,93 +157,6 @@ function explainWranglerFailure(message, source, code) {
   const detail =
     text.split("\n").filter(Boolean).slice(-4).join(" ") || `wrangler exited with code ${code}`;
   return `${detail}${hint}`;
-}
-
-// ---- positional result sets -> named, typed payload -------------------------
-
-const num = (v) => (typeof v === "number" ? v : v == null ? 0 : Number(v) || 0);
-const scalar = (set) => num(set?.[0]?.n);
-
-function groupToMap(set, key) {
-  const out = {};
-  for (const row of set ?? []) out[row[key]] = num(row.n);
-  return out;
-}
-
-function shapePayload(sets) {
-  const get = (name) => sets[QUERY_MAP.indexOf(name)] ?? [];
-
-  const tiers = groupToMap(get("tierBreakdown"), "tier");
-  const overlap = get("overlapStats")[0] ?? {};
-
-  return {
-    totals: {
-      contributions: scalar(get("totalContributions")),
-      unpromoted: scalar(get("unpromoted")),
-      episodes: scalar(get("totalEpisodes")),
-      shows: scalar(get("distinctShows")),
-      packs: scalar(get("showsWithCanonical")),
-      contributors: scalar(get("totalContributors")),
-      flagged: scalar(get("flaggedContributors")),
-    },
-    tiers: {
-      candidate: num(tiers.candidate),
-      confirmed: num(tiers.confirmed),
-      canonical: num(tiers.canonical),
-    },
-    confidenceByTier: (get("confidenceByTier") ?? []).map((r) => ({
-      tier: r.tier,
-      avg: num(r.avg_conf),
-      min: num(r.min_conf),
-      max: num(r.max_conf),
-    })),
-    poison: groupToMap(get("poisonBreakdown"), "poison_check"),
-    overlap: {
-      n: num(overlap.n),
-      avg: num(overlap.avg_overlap),
-      max: num(overlap.max_overlap),
-    },
-    matchSources: (get("matchSourceBreakdown") ?? []).map((r) => ({
-      source: r.match_source,
-      n: num(r.n),
-    })),
-    timeseries: {
-      contributions: toSeries(get("contributionsByDay")),
-      canonicals: toSeries(get("canonicalsByDay")),
-      contributors: toSeries(get("contributorsByDay")),
-    },
-    topShows: (get("topShows") ?? []).map((r) => ({
-      tmdb_id: num(r.tmdb_id),
-      episodes: num(r.episodes),
-      canonical: num(r.canonical),
-      confirmed: num(r.confirmed),
-      candidate: num(r.candidate),
-      avg_conf: num(r.avg_conf),
-    })),
-    topContributors: (get("topContributors") ?? []).map((r) => ({
-      pseudonym: r.pseudonym,
-      count: num(r.contribution_count),
-      flagged: num(r.flagged) === 1,
-      flag_count: num(r.flag_count),
-      first_seen: num(r.first_seen),
-      last_seen: num(r.last_seen),
-    })),
-    recent: (get("recentContributions") ?? []).map((r) => ({
-      id: num(r.id),
-      received_at: num(r.received_at),
-      tmdb_id: num(r.tmdb_id),
-      season: r.season,
-      episode: r.episode,
-      match_source: r.match_source,
-      match_confidence: num(r.match_confidence),
-      poison_check: r.poison_check,
-      promoted: r.promoted_at != null,
-    })),
-  };
-}
-
-function toSeries(set) {
-  return (set ?? []).filter((r) => r.day).map((r) => ({ day: r.day, n: num(r.n) }));
 }
 
 // ---- http -------------------------------------------------------------------
