@@ -324,6 +324,18 @@ const server = createServer((req, res) => {
   serveStatic(url.pathname, res).catch(() => res.writeHead(500).end("Server error"));
 });
 
+server.on("error", (err) => {
+  if (err.code === "EADDRINUSE") {
+    process.stderr.write(
+      `\n  \x1b[38;2;255;107;107mport ${PORT} is already in use\x1b[0m\n` +
+        `  the dashboard is probably already running at http://${HOST}:${PORT}\n` +
+        `  stop that instance first, or set DASHBOARD_PORT to a free port.\n\n`,
+    );
+    process.exit(1);
+  }
+  throw err;
+});
+
 server.listen(PORT, HOST, () => {
   const link = `http://${HOST}:${PORT}`;
   process.stdout.write(`\n  \x1b[38;2;124;255;178mengram signal lab\x1b[0m — catalog dashboard\n`);
