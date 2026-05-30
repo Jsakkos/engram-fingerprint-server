@@ -40,6 +40,24 @@ Phase 3 will add `GET /v1/identify` and `GET /v1/pack/{tmdb_id}`.
 
 See `migrations/001_initial.sql`.
 
+## Catalog dashboard
+
+A local-only "Signal Lab" dashboard for watching the catalog fill up — the promotion
+funnel (contributions → candidate → confirmed → canonical → packs), growth over time,
+tier/confidence breakdowns, anti-poison integrity, and top shows/contributors.
+
+```bash
+pnpm dashboard          # serves http://127.0.0.1:8788
+```
+
+It reads data through the `wrangler` CLI — no changes to the deployed worker and no new
+public endpoints — with a **LOCAL / PROD** toggle in the header:
+
+- **LOCAL** — the Miniflare DB from `pnpm migrate:local` / `pnpm dev`.
+- **PROD** — the production D1 catalog; requires `wrangler login` (or `CLOUDFLARE_API_TOKEN`).
+
+Read-only. Queries live in `dashboard/queries.sql`; the server is `scripts/dashboard-server.mjs`.
+
 ## Local seeding (dev only)
 
 `POST /v1/_dev/seed` is a development-only route for seeding canonical fingerprints directly into the local D1 database so you can test `GET /v1/identify` end-to-end without going through the contribution/promotion flow. The route is **404 in production** — it only activates when `ALLOW_DEV_SEED=1` is set in the environment, which is never done in `wrangler.toml`.

@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>engram · signal lab</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23060906'/%3E%3Ccircle cx='16' cy='16' r='4' fill='%237cffb2'/%3E%3Ccircle cx='16' cy='16' r='10' fill='none' stroke='%237cffb2' stroke-width='2' opacity='0.55'/%3E%3C/svg%3E"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Oxanium:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="crt" aria-hidden="true"></div>
+
+    <header class="topbar">
+      <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 40 40" aria-hidden="true">
+          <circle cx="20" cy="20" r="3" />
+          <circle class="ring r1" cx="20" cy="20" r="9" />
+          <circle class="ring r2" cx="20" cy="20" r="15" />
+          <circle class="ring r3" cx="20" cy="20" r="19" />
+        </svg>
+        <div class="brand-text">
+          <h1>ENGRAM <span>SIGNAL&nbsp;LAB</span></h1>
+          <p>fingerprint catalog telemetry</p>
+        </div>
+      </div>
+
+      <div class="equalizer" aria-hidden="true" id="equalizer"></div>
+
+      <div class="controls">
+        <div class="source-toggle" id="sourceToggle" role="group" aria-label="Data source">
+          <button type="button" data-source="local" class="active">LOCAL</button>
+          <button type="button" data-source="remote">PROD</button>
+        </div>
+        <button type="button" class="refresh-btn" id="refreshBtn" title="Refresh now">
+          <span class="refresh-glyph">⟳</span> SCAN
+        </button>
+        <label class="auto-toggle">
+          <input type="checkbox" id="autoToggle" checked />
+          <span>AUTO</span>
+        </label>
+        <div class="status" id="status">
+          <span class="dot" id="statusDot"></span>
+          <span id="statusText">initialising…</span>
+        </div>
+      </div>
+    </header>
+
+    <div class="error-banner" id="errorBanner" hidden>
+      <span class="error-icon">⚠</span>
+      <span id="errorText"></span>
+    </div>
+
+    <main id="main">
+      <!-- stat tiles -->
+      <section class="tiles" id="tiles"></section>
+
+      <!-- hero: the promotion funnel -->
+      <section class="panel hero" id="hero">
+        <div class="panel-head">
+          <span class="panel-label">PROMOTION CHAIN</span>
+          <span class="panel-sub" id="heroSub">contribution → consensus → pack</span>
+        </div>
+        <div class="funnel" id="funnel"></div>
+      </section>
+
+      <div class="grid">
+        <!-- growth oscilloscope -->
+        <section class="panel span-2" id="growthPanel">
+          <div class="panel-head">
+            <span class="panel-label">CATALOG GROWTH</span>
+            <div class="mode-toggle" id="growthMode" role="group" aria-label="Chart mode">
+              <button type="button" data-mode="cumulative" class="active">CUMULATIVE</button>
+              <button type="button" data-mode="daily">PER&nbsp;DAY</button>
+            </div>
+          </div>
+          <div class="chart-wrap" id="growthChart"></div>
+          <div class="legend" id="growthLegend"></div>
+        </section>
+
+        <!-- tier ladder + confidence -->
+        <section class="panel" id="tierPanel">
+          <div class="panel-head">
+            <span class="panel-label">TIER LADDER</span>
+            <span class="panel-sub" id="tierSub"></span>
+          </div>
+          <div class="tier-ladder" id="tierLadder"></div>
+        </section>
+
+        <!-- match sources -->
+        <section class="panel" id="sourcePanel">
+          <div class="panel-head">
+            <span class="panel-label">MATCH SOURCES</span>
+          </div>
+          <div class="barlist" id="sourceBars"></div>
+        </section>
+
+        <!-- anti-poison health -->
+        <section class="panel" id="poisonPanel">
+          <div class="panel-head">
+            <span class="panel-label">INTEGRITY</span>
+            <span class="panel-sub">anti-poison</span>
+          </div>
+          <div class="poison" id="poison"></div>
+        </section>
+
+        <!-- top shows -->
+        <section class="panel span-2" id="showsPanel">
+          <div class="panel-head">
+            <span class="panel-label">TOP SHOWS</span>
+            <span class="panel-sub">by tracked episodes</span>
+          </div>
+          <div class="table-wrap" id="showsTable"></div>
+        </section>
+
+        <!-- top contributors -->
+        <section class="panel" id="contributorsPanel">
+          <div class="panel-head">
+            <span class="panel-label">CONTRIBUTORS</span>
+            <span class="panel-sub">top submitters</span>
+          </div>
+          <div class="table-wrap" id="contributorsTable"></div>
+        </section>
+
+        <!-- recent activity -->
+        <section class="panel span-3" id="activityPanel">
+          <div class="panel-head">
+            <span class="panel-label">LIVE FEED</span>
+            <span class="panel-sub">latest contributions</span>
+          </div>
+          <div class="feed" id="feed"></div>
+        </section>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <span id="footerSource">LOCAL</span>
+      <span class="sep">·</span>
+      <span id="footerStamp">—</span>
+      <span class="sep">·</span>
+      <span>read-only · wrangler d1 · engram-fingerprint</span>
+    </footer>
+
+    <script src="app.js" type="module"></script>
+  </body>
+</html>
