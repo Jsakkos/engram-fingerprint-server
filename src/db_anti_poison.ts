@@ -58,37 +58,24 @@ export async function screenAntiPoison(
   };
 }
 
-/** Hamming-distance count of bits differing between two uint32s. */
-function hammingDistance32(a: number, b: number): number {
-  let x = (a ^ b) >>> 0;
-  x = x - ((x >> 1) & 0x55555555);
-  x = (x & 0x33333333) + ((x >> 2) & 0x33333333);
-  return (((x + (x >> 4)) & 0x0f0f0f0f) * 0x01010101) >>> 24;
-}
-
 /**
- * Exact-overlap computation: for each query hash, find if ANY ref hash is
- * within Hamming<=6. Returns fraction of query hashes with a match.
+ * Exact-overlap fraction: fraction of query hashes that appear verbatim in the
+ * reference set. EXACT membership only — there is no Hamming/fuzzy fallback.
  *
- * O(|query| × |ref|) — only run on the candidate surviving the minhash screen,
- * so this is at most ~10K × ~10K = 100M ops, within Worker CPU budget.
+ * A previous Hamming<=6 fallback saturated this metric to ~1.0 for any same-size
+ * canonical (the Hamming-6 ball holds ~1.15M of 2^32 values, so against a ~21.8k
+ * reference *some* hash lands inside it ~99.7% of the time by chance). See issue
+ * #3. Approximate matching is handled upstream by the MinHash screen; this stage
+ * confirms exactly, so it must stay exact.
+ *
+ * O(|ref|) to build the Set + O(|query|) lookups.
  */
 export function exactOverlap(queryHashes: number[], refHashes: number[]): number {
   if (queryHashes.length === 0) return 0;
+  const refSet = new Set(refHashes);
   let matches = 0;
-  const refSet = new Set(refHashes); // exact equality fast path
   for (const q of queryHashes) {
-    if (refSet.has(q)) {
-      matches++;
-      continue;
-    }
-    // Hamming<=6 scan (slow path)
-    for (const r of refHashes) {
-      if (hammingDistance32(q, r) <= 6) {
-        matches++;
-        break;
-      }
-    }
+    if (refSet.has(q)) matches++;
   }
   return matches / queryHashes.length;
 }

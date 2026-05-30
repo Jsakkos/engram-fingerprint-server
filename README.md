@@ -90,3 +90,25 @@ curl "localhost:8787/v1/identify?fp=<b64url-encoded-fingerprint>&k=5"
 The route accepts a JSON body `{ "episodes": [{ "tmdb_id", "season", "episode", "hashes": number[] }] }` and returns `{ "seeded": N }`. It upserts into `episode_canonical` and `canonical_sketch`, so re-seeding with updated hashes is safe.
 
 `ALLOW_DEV_SEED` is never set in `wrangler.toml`, so the route does not exist in production.
+
+### Interpreting identify results
+
+Each candidate carries three scores. **Gate confidence on `combined_score`** (the value
+the server ranks and floors on) or `rarity_weighted_score` — **not** `hash_overlap_pct`:
+
+- `hash_overlap_pct` — fraction of query hashes present **verbatim** in the candidate
+  canonical. This is *exact* membership only (no fuzzy/Hamming fallback; see
+  [issue #3](https://github.com/Jsakkos/engram-fingerprint-server/issues/3)). On an
+  independent re-decode of the same audio it can be low even for the correct episode.
+- `rarity_weighted_score` — IDF-weighted exact overlap; rare hashes count for more.
+- `combined_score` — weighted blend (rarity 0.5, overlap 0.3, temporal 0.2) used for ranking.
+
+The server already drops candidates below `IDENTIFY_MIN_SCORE`, so an unrelated query
+returns `{ "candidates": [] }` rather than low-confidence noise.
+
+### Tunable vars (`wrangler.toml [vars]`)
+
+- `POISON_CONFLICT_THRESHOLD` (default `0.70`) — exact-overlap threshold above which a
+  contribution is flagged as a poison conflict against another canonical.
+- `IDENTIFY_MIN_SCORE` (default `0.15`) — minimum `combined_score` for a `/v1/identify`
+  candidate to be returned.

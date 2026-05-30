@@ -57,6 +57,25 @@ describe("GET /v1/identify", () => {
     expect(data.candidates[0].episode).toBe(3);
     expect(data.candidates[0].hash_overlap_pct).toBeGreaterThan(0.9);
     expect(data.candidates[0].tier).toBe("canonical");
+    // combined_score is surfaced so clients gate on the same signal the server ranks/floors on.
+    expect(data.candidates[0].combined_score).toBeGreaterThan(0.15);
+  });
+
+  it("returns no candidates for an unrelated query (confidence floor)", async () => {
+    await seedCanonical(
+      78001,
+      1,
+      1,
+      Array.from({ length: 240 }, (_, i) => 100000 + i),
+    );
+    // Query hashes disjoint from every seeded canonical -> exact overlap 0 ->
+    // combined_score ~0 -> dropped by the IDENTIFY_MIN_SCORE floor.
+    const unrelated = Array.from({ length: 240 }, (_, i) => 2_000_000_000 + i * 7);
+    const q = await encodeZstdVarint(unrelated);
+    const res = await SELF.fetch(`https://x.com/v1/identify?fp=${b64url(q)}&k=5`);
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as any;
+    expect(data.candidates.length).toBe(0);
   });
 
   it("returns 400 for a garbage fingerprint (never 500)", async () => {

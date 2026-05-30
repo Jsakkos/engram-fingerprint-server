@@ -23,6 +23,7 @@ export async function handleIdentify(request: Request, env: Env): Promise<Respon
   const fp = url.searchParams.get("fp");
   const rawK = Number(url.searchParams.get("k") ?? "5");
   const topK = Math.max(1, Math.min(20, Number.isFinite(rawK) && rawK > 0 ? rawK : 5));
+  const minScore = Number.parseFloat(env.IDENTIFY_MIN_SCORE ?? "0.15");
   if (!fp) return Response.json({ error: "missing fp" }, { status: 400 });
 
   let queryHashes: number[];
@@ -62,16 +63,20 @@ export async function handleIdentify(request: Request, env: Env): Promise<Respon
     };
   });
   candidates.sort((a, b) => b.combined_score - a.combined_score);
+  // Confidence floor (issue #3): drop candidates below IDENTIFY_MIN_SCORE so an
+  // unrelated query returns no match rather than garbage candidates scoring ~0.
+  const confident = candidates.filter((c) => c.combined_score >= minScore);
 
   return Response.json(
     {
-      candidates: candidates.slice(0, topK).map((c) => ({
+      candidates: confident.slice(0, topK).map((c) => ({
         tmdb_id: c.tmdb_id,
         season: c.season,
         episode: c.episode,
         offset_seconds: null, // canonical fingerprints carry no offsets in Phase 3; populated in Phase 4
         hash_overlap_pct: c.hash_overlap_pct,
         rarity_weighted_score: c.rarity_weighted_score,
+        combined_score: c.combined_score, // server's ranking/gating signal — clients should threshold on this
         tier: c.tier,
       })),
     },
