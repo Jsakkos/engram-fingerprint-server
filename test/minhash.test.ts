@@ -75,21 +75,25 @@ describe("minhash", () => {
     };
 
     const hashes = Array.from({ length: 10_661 }, (_, i) => (i * 2654435761) >>> 0);
-    const medianMs = (fn: () => void): number => {
+    // Use the FASTEST of several runs, not the median: on shared CI vCPUs a
+    // scheduler spike only ever *adds* time, so the minimum approximates the true
+    // compute cost with contention filtered out. Both families are timed the same
+    // way back-to-back, so the ratio is stable even on a loaded runner.
+    const fastestMs = (fn: () => void): number => {
       for (let w = 0; w < 3; w++) fn(); // warm JIT
-      const samples: number[] = [];
-      for (let r = 0; r < 7; r++) {
+      let best = Number.POSITIVE_INFINITY;
+      for (let r = 0; r < 9; r++) {
         const t0 = performance.now();
         fn();
-        samples.push(performance.now() - t0);
+        best = Math.min(best, performance.now() - t0);
       }
-      return samples.sort((a, b) => a - b)[3];
+      return best;
     };
 
-    const fast = medianMs(() => {
+    const fast = fastestMs(() => {
       minhash128(hashes);
     });
-    const slow = medianMs(() => slowMinhash128(hashes));
+    const slow = fastestMs(() => slowMinhash128(hashes));
     // Real speedup is ~10x; require a conservative 3x so CI timing noise can't flake it.
     expect(fast).toBeLessThan(slow / 3);
   });

@@ -68,10 +68,15 @@ async function main() {
     `d1 execute ${DB_NAME} ${scope} --json --command ` +
       `"SELECT tmdb_id, season, episode, hex(fingerprint) AS fp_hex FROM episode_canonical"`,
   );
-  // wrangler --json prints a JSON array of { results, success, meta } objects,
-  // possibly preceded by a banner — slice from the first '[' to the last ']'.
-  const jsonText = raw.slice(raw.indexOf("["), raw.lastIndexOf("]") + 1);
-  const parsed = JSON.parse(jsonText);
+  // wrangler --json writes the JSON array to stdout (its banner/logs go to
+  // stderr). Parse from the first '[' to end-of-string: trailing whitespace is
+  // fine, and any future trailing non-JSON makes JSON.parse throw loudly rather
+  // than silently mis-slicing (which lastIndexOf("]") would on a stray ']').
+  const firstBracket = raw.indexOf("[");
+  if (firstBracket === -1) {
+    throw new Error("wrangler returned no JSON array — check for an auth or config error");
+  }
+  const parsed = JSON.parse(raw.slice(firstBracket));
   const rows = parsed[0]?.results ?? [];
   console.log(`Found ${rows.length} canonical episode(s).`);
 
