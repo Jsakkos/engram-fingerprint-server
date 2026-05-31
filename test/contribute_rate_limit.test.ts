@@ -51,6 +51,12 @@ describe("POST /v1/contribute — per-pseudonym rate limit", () => {
     const okEnv = { ...env, CONTRIBUTE_RATE_LIMITER: allow };
     const res = await handleContribute(makeRequest(await makeBody({ pseudonym })), okEnv);
     expect(res.status).toBe(202);
+
+    // Symmetric to the over-limit case: the allow path proceeds to the DB write.
+    const contributor = await env.DB.prepare("SELECT * FROM contributor WHERE pseudonym = ?")
+      .bind(pseudonym)
+      .first();
+    expect(contributor).not.toBeNull();
   });
 
   it("returns 429 + Retry-After and writes nothing when over the limit", async () => {

@@ -35,6 +35,7 @@ export async function handleContribute(request: Request, env: Env): Promise<Resp
     if (!success) {
       return new Response("rate limited", {
         status: 429,
+        // Keep "60" in sync with wrangler.toml [[ratelimits]] simple.period.
         headers: { "Retry-After": "60" },
       });
     }
