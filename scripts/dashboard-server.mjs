@@ -40,6 +40,7 @@ const TMDB_API_KEY = process.env.TMDB_API_KEY;
 const TMDB_ENABLED = Boolean(TMDB_BEARER || TMDB_API_KEY);
 const TMDB_TIMEOUT_MS = 4000;
 const TMDB_CONCURRENCY = 8;
+const TMDB_TOTAL_BUDGET_MS = 8000;
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -229,12 +230,17 @@ async function fetchShowName(id) {
 }
 
 // Resolve names for the given ids, best-effort. Returns { [id]: name } containing
-// only ids that resolved to a non-empty name. Never throws; never blocks beyond
-// the per-request timeout budget.
+// only ids that resolved to a name. Never throws. Total wall-clock is bounded: new
+// batches stop launching once TMDB_TOTAL_BUDGET_MS elapses, so the worst case is
+// that budget plus one in-flight batch (TMDB_TIMEOUT_MS). The stats response is
+// never held hostage to a slow or failing TMDB, even on a cold cache. Names that
+// did resolve before the budget ran out are still returned.
 async function resolveNames(ids) {
   if (!TMDB_ENABLED) return {};
   const missing = ids.filter((id) => !nameCache.has(id));
+  const deadline = Date.now() + TMDB_TOTAL_BUDGET_MS;
   for (let i = 0; i < missing.length; i += TMDB_CONCURRENCY) {
+    if (Date.now() >= deadline) break;
     await Promise.all(missing.slice(i, i + TMDB_CONCURRENCY).map(fetchShowName));
   }
   const names = {};
