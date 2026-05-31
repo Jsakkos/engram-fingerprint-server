@@ -25,6 +25,15 @@ const nf = new Intl.NumberFormat("en-US");
 const fmtNum = (n) => nf.format(n);
 const fmtPct = (x, d = 0) => `${(x * 100).toFixed(d)}%`;
 
+// Escape DB-sourced strings before interpolating into innerHTML. The worker
+// constrains these columns to enums today, but nothing here re-validates them,
+// so escape defensively against any unexpected/future value.
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+
+// poison_check drives a CSS class, so whitelist it (not just escape) — an
+// unknown value falls back to a safe, known class.
+const KNOWN_CHECKS = new Set(["pass", "flag_conflict", "flag_duplicate", "pending"]);
+
 function el(tag, cls, html) {
   const node = document.createElement(tag);
   if (cls) node.className = cls;
@@ -365,7 +374,7 @@ function renderSources(sources) {
   const max = Math.max(1, ...sources.map((s) => s.n));
   host.innerHTML = sources
     .map((s) => {
-      const label = SOURCE_LABELS[s.source] || s.source;
+      const label = SOURCE_LABELS[s.source] ?? esc(s.source);
       return (
         '<div class="brow">' +
         `<div class="brow-head"><b>${label}</b><span class="brow-n">${fmtNum(s.n)}</span></div>` +
@@ -446,7 +455,7 @@ function renderContributors(list) {
   }
   const rows = list
     .map((c) => {
-      const id = `${String(c.pseudonym).slice(0, 8)}…`;
+      const id = `${esc(String(c.pseudonym).slice(0, 8))}…`;
       const badge = c.flagged
         ? `<span class="badge flag">flagged ${c.flag_count}</span>`
         : '<span class="badge ok">ok</span>';
@@ -479,7 +488,9 @@ function renderFeed(recent) {
   }
   host.innerHTML = recent
     .map((r, i) => {
-      const src = SOURCE_LABELS[r.match_source] || r.match_source;
+      const src = SOURCE_LABELS[r.match_source] ?? esc(r.match_source);
+      const check = KNOWN_CHECKS.has(r.poison_check) ? r.poison_check : "pending";
+      const checkText = check.replace("flag_", "");
       const promoted = r.promoted ? '<span class="promoted-mark" title="promoted">▲</span>' : "";
       return (
         `<div class="feed-row" style="animation-delay:${Math.min(i * 25, 400)}ms">` +
@@ -487,7 +498,7 @@ function renderFeed(recent) {
         `<span class="feed-ep"><span class="show">tmdb:${r.tmdb_id}</span> ${epLabel(r)}${promoted}</span>` +
         `<span class="feed-src">${src}</span>` +
         `<span class="feed-conf">${r.match_confidence.toFixed(2)}</span>` +
-        `<span class="feed-tag"><span class="tag ${r.poison_check}">${r.poison_check.replace("flag_", "")}</span></span>` +
+        `<span class="feed-tag"><span class="tag ${check}">${checkText}</span></span>` +
         "</div>"
       );
     })

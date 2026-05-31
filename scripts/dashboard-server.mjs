@@ -13,7 +13,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
-import { extname, join, resolve } from "node:path";
+import { extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -174,8 +174,13 @@ function explainWranglerFailure(message, source, code) {
         ? " — confirm the prod D1 exists and you're authed."
         : " — run `pnpm migrate:local`.";
   }
-  const detail =
+  const raw =
     text.split("\n").filter(Boolean).slice(-4).join(" ") || `wrangler exited with code ${code}`;
+  // Redact anything resembling a credential before it reaches the browser's
+  // network inspector (e.g. a token echoed during an auth failure).
+  const detail = raw
+    .replace(/Bearer\s+[\w.-]+/gi, "Bearer [redacted]")
+    .replace(/\b[0-9a-f]{32,}\b/gi, "[redacted]");
   return `${detail}${hint}`;
 }
 
@@ -191,7 +196,11 @@ function groupToMap(set, key) {
 }
 
 function shapePayload(sets) {
-  const get = (name) => sets[QUERY_MAP.indexOf(name)] ?? [];
+  const get = (name) => {
+    const idx = QUERY_MAP.indexOf(name);
+    if (idx === -1) throw new Error(`QUERY_MAP has no entry named "${name}" — fix the mapping.`);
+    return sets[idx] ?? [];
+  };
 
   const tiers = groupToMap(get("tierBreakdown"), "tier");
   const overlap = get("overlapStats")[0] ?? {};
@@ -241,7 +250,9 @@ function shapePayload(sets) {
       avg_conf: num(r.avg_conf),
     })),
     topContributors: (get("topContributors") ?? []).map((r) => ({
-      pseudonym: r.pseudonym,
+      // Truncate at the shaping layer so the full pseudonym never leaves the
+      // server — the UI only ever displays the first 8 chars anyway.
+      pseudonym: String(r.pseudonym ?? "").slice(0, 8),
       count: num(r.contribution_count),
       flagged: num(r.flagged) === 1,
       flag_count: num(r.flag_count),
@@ -293,7 +304,10 @@ async function handleStats(url, res) {
 async function serveStatic(pathname, res) {
   const rel = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
   const filePath = resolve(DASHBOARD_DIR, rel);
-  if (!filePath.startsWith(DASHBOARD_DIR)) {
+  // Component-exact containment check. `sep` (not a literal "/") keeps this
+  // correct on Windows, where resolve() returns backslash-separated paths, and
+  // prevents a sibling like `dashboard-backup/` from passing a bare prefix test.
+  if (filePath !== DASHBOARD_DIR && !filePath.startsWith(DASHBOARD_DIR + sep)) {
     res.writeHead(403).end("Forbidden");
     return;
   }
@@ -316,6 +330,12 @@ function sendJson(res, status, obj) {
 }
 
 const server = createServer((req, res) => {
+  // This is a read-only viewer; only GET is meaningful. Reject other methods
+  // before any work so a stray POST/DELETE can't spawn the wrangler subprocess.
+  if (req.method !== "GET") {
+    res.writeHead(405, { Allow: "GET" }).end("Method Not Allowed");
+    return;
+  }
   const url = new URL(req.url, `http://${HOST}:${PORT}`);
   if (url.pathname === "/api/stats") {
     handleStats(url, res).catch((err) => sendJson(res, 500, { ok: false, error: String(err) }));
