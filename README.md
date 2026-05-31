@@ -58,6 +58,12 @@ public endpoints — with a **LOCAL / PROD** toggle in the header:
 
 Read-only. Queries live in `dashboard/queries.sql`; the server is `scripts/dashboard-server.mjs`.
 
+**Show names (optional).** Episodes are keyed only by TMDB id. To display show
+names next to each `tmdb:NNN`, set a TMDB credential before `pnpm dashboard`:
+`TMDB_READ_ACCESS_TOKEN` (v4 read access token, preferred) or `TMDB_API_KEY`
+(v3 key). Names are fetched live and cached in memory; without a credential the
+dashboard shows ids only.
+
 ## Local seeding (dev only)
 
 `POST /v1/_dev/seed` is a development-only route for seeding canonical fingerprints directly into the local D1 database so you can test `GET /v1/identify` end-to-end without going through the contribution/promotion flow. The route is **404 in production** — it only activates when `ALLOW_DEV_SEED=1` is set in the environment, which is never done in `wrangler.toml`.

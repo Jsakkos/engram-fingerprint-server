@@ -15,7 +15,12 @@ import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { isSummaryResponse, parseWranglerJson, shapePayload } from "../dashboard/transform.mjs";
+import {
+  distinctShowIds,
+  isSummaryResponse,
+  parseWranglerJson,
+  shapePayload,
+} from "../dashboard/transform.mjs";
 
 const REPO_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const DASHBOARD_DIR = join(REPO_ROOT, "dashboard");
@@ -26,10 +31,22 @@ const HOST = "127.0.0.1";
 const CACHE_TTL_MS = 30_000;
 const WRANGLER_TIMEOUT_MS = 30_000;
 
+// --- TMDB show-name resolution (best-effort, optional) ---
+// v4 read access token (Bearer) is preferred; falls back to a v3 api_key query
+// param. With neither set, name resolution is inert and the dashboard is
+// unchanged. Node 20's global fetch is used — no new dependencies.
+const TMDB_BEARER = process.env.TMDB_READ_ACCESS_TOKEN;
+const TMDB_API_KEY = process.env.TMDB_API_KEY;
+const TMDB_ENABLED = Boolean(TMDB_BEARER || TMDB_API_KEY);
+const TMDB_TIMEOUT_MS = 4000;
+const TMDB_CONCURRENCY = 8;
+const TMDB_TOTAL_BUDGET_MS = 8000;
+
 const MIME = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
   ".svg": "image/svg+xml",
   ".sql": "text/plain; charset=utf-8",
 };
@@ -107,6 +124,9 @@ async function runWrangler(source) {
       finish({ ok: false, error: `Failed to launch wrangler: ${err.message}` });
     });
     child.on("close", (code) => {
+      // wrangler has exited; its watchdog no longer applies. Name resolution
+      // below has its own per-request timeout budget.
+      clearTimeout(timer);
       if (code !== 0) {
         finish({ ok: false, error: explainWranglerFailure(stderr || stdout, source, code) });
         return;
@@ -126,7 +146,16 @@ async function runWrangler(source) {
         });
         return;
       }
-      finish({ ok: true, data: shapePayload(sets) });
+      const data = shapePayload(sets);
+      resolveNames(distinctShowIds(data))
+        .then((names) => {
+          data.names = names;
+          finish({ ok: true, data });
+        })
+        .catch(() => {
+          data.names = {};
+          finish({ ok: true, data });
+        });
     });
   });
 }
@@ -155,6 +184,99 @@ function explainWranglerFailure(message, source, code) {
   const detail =
     text.split("\n").filter(Boolean).slice(-4).join(" ") || `wrangler exited with code ${code}`;
   return `${detail}${hint}`;
+}
+
+// ---- tmdb name resolution ---------------------------------------------------
+
+// id -> name (string) | null. null records a confirmed 404 so we never re-fetch
+// an unknown id; a resolved name is cached as its string. Lives for the process
+// lifetime; names don't change. Transient failures (network, timeout, 429/5xx)
+// are deliberately NOT cached so a later refresh retries them.
+const nameCache = new Map();
+const warnedOnce = new Set();
+// Concurrent /api/stats?fresh=1 requests (e.g. two browser tabs) would otherwise
+// each fetch the same uncached ids. De-dupe by id: a later caller shares the
+// in-flight fetch instead of issuing its own (halving TMDB load, avoiding 429s).
+const inFlight = new Map(); // id -> Promise
+// A 401 means the configured credential is bad. Credentials are read once at
+// startup, so this can't self-correct at runtime — latch it and skip resolution
+// entirely rather than re-burning the whole TMDB budget on every refresh.
+let tmdbAuthFailed = false;
+
+function warnOnce(message) {
+  if (warnedOnce.has(message)) return;
+  warnedOnce.add(message);
+  process.stderr.write(`  ${message}\n`);
+}
+
+function fetchShowName(id) {
+  const pending = inFlight.get(id);
+  if (pending) return pending; // a fetch for this id is already running — share it
+  const p = doFetchShowName(id).finally(() => inFlight.delete(id));
+  inFlight.set(id, p);
+  return p;
+}
+
+async function doFetchShowName(id) {
+  const base = `https://api.themoviedb.org/3/tv/${id}`;
+  const url = TMDB_BEARER ? base : `${base}?api_key=${TMDB_API_KEY}`;
+  const headers = { accept: "application/json" };
+  if (TMDB_BEARER) headers.authorization = `Bearer ${TMDB_BEARER}`;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TMDB_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { headers, signal: controller.signal });
+    if (res.status === 404) {
+      nameCache.set(id, null); // confirmed unknown — don't re-fetch
+      return;
+    }
+    if (res.status === 401) {
+      warnOnce("TMDB rejected the credential (401) — check TMDB_READ_ACCESS_TOKEN / TMDB_API_KEY.");
+      tmdbAuthFailed = true; // bad credential won't self-correct — stop trying
+      return;
+    }
+    if (res.status === 429) {
+      warnOnce(
+        "TMDB rate-limited (429) — show names may be incomplete; consider lowering TMDB_CONCURRENCY.",
+      );
+      return; // transient — do NOT cache
+    }
+    if (!res.ok) {
+      // other 4xx/5xx — transient, do NOT cache. Surface once so outages are visible.
+      warnOnce(`TMDB returned HTTP ${res.status} — show names may be incomplete.`);
+      return;
+    }
+    const body = await res.json();
+    const name = typeof body?.name === "string" ? body.name.trim() : "";
+    if (name) nameCache.set(id, name); // empty/blank name: leave uncached, may retry
+  } catch {
+    // network error or abort/timeout — do NOT cache, retry next refresh
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Resolve names for the given ids, best-effort. Returns { [id]: name } containing
+// only ids that resolved to a name. Never throws. Total wall-clock is bounded: new
+// batches stop launching once TMDB_TOTAL_BUDGET_MS elapses, so the worst case is
+// that budget plus one in-flight batch (TMDB_TIMEOUT_MS) — i.e. ~12s, not 8s. The
+// stats response is never held hostage to a slow or failing TMDB, even on a cold
+// cache. Names that did resolve before the budget ran out are still returned.
+async function resolveNames(ids) {
+  if (!TMDB_ENABLED || tmdbAuthFailed) return {};
+  const missing = ids.filter((id) => !nameCache.has(id));
+  const deadline = Date.now() + TMDB_TOTAL_BUDGET_MS;
+  for (let i = 0; i < missing.length; i += TMDB_CONCURRENCY) {
+    if (tmdbAuthFailed || Date.now() >= deadline) break;
+    await Promise.all(missing.slice(i, i + TMDB_CONCURRENCY).map(fetchShowName));
+  }
+  const names = {};
+  for (const id of ids) {
+    const name = nameCache.get(id);
+    if (typeof name === "string") names[id] = name;
+  }
+  return names;
 }
 
 // ---- http -------------------------------------------------------------------
@@ -232,6 +354,11 @@ server.listen(PORT, HOST, () => {
   process.stdout.write(`\n  \x1b[38;2;124;255;178mengram signal lab\x1b[0m — catalog dashboard\n`);
   process.stdout.write(`  ${link}\n`);
   process.stdout.write(`  data via wrangler d1 (${DB_NAME}) — toggle LOCAL / PROD in the UI\n`);
+  process.stdout.write(
+    TMDB_ENABLED
+      ? "  show names via TMDB — enabled\n"
+      : "  show names via TMDB — disabled (set TMDB_READ_ACCESS_TOKEN or TMDB_API_KEY)\n",
+  );
   process.stdout.write(`  press Ctrl+C to stop\n\n`);
   maybeOpenBrowser(link);
 });
