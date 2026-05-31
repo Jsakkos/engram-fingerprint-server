@@ -194,6 +194,10 @@ function explainWranglerFailure(message, source, code) {
 // are deliberately NOT cached so a later refresh retries them.
 const nameCache = new Map();
 const warnedOnce = new Set();
+// Concurrent /api/stats?fresh=1 requests (e.g. two browser tabs) would otherwise
+// each fetch the same uncached ids. De-dupe by id: a later caller shares the
+// in-flight fetch instead of issuing its own (halving TMDB load, avoiding 429s).
+const inFlight = new Map(); // id -> Promise
 // A 401 means the configured credential is bad. Credentials are read once at
 // startup, so this can't self-correct at runtime — latch it and skip resolution
 // entirely rather than re-burning the whole TMDB budget on every refresh.
@@ -205,7 +209,15 @@ function warnOnce(message) {
   process.stderr.write(`  ${message}\n`);
 }
 
-async function fetchShowName(id) {
+function fetchShowName(id) {
+  const pending = inFlight.get(id);
+  if (pending) return pending; // a fetch for this id is already running — share it
+  const p = doFetchShowName(id).finally(() => inFlight.delete(id));
+  inFlight.set(id, p);
+  return p;
+}
+
+async function doFetchShowName(id) {
   const base = `https://api.themoviedb.org/3/tv/${id}`;
   const url = TMDB_BEARER ? base : `${base}?api_key=${TMDB_API_KEY}`;
   const headers = { accept: "application/json" };
@@ -224,9 +236,14 @@ async function fetchShowName(id) {
       tmdbAuthFailed = true; // bad credential won't self-correct — stop trying
       return;
     }
+    if (res.status === 429) {
+      warnOnce(
+        "TMDB rate-limited (429) — show names may be incomplete; consider lowering TMDB_CONCURRENCY.",
+      );
+      return; // transient — do NOT cache
+    }
     if (!res.ok) {
-      // 429 / 5xx etc. — transient, do NOT cache. Surface once so rate-limit or
-      // outage problems aren't completely invisible.
+      // other 4xx/5xx — transient, do NOT cache. Surface once so outages are visible.
       warnOnce(`TMDB returned HTTP ${res.status} — show names may be incomplete.`);
       return;
     }
@@ -243,9 +260,9 @@ async function fetchShowName(id) {
 // Resolve names for the given ids, best-effort. Returns { [id]: name } containing
 // only ids that resolved to a name. Never throws. Total wall-clock is bounded: new
 // batches stop launching once TMDB_TOTAL_BUDGET_MS elapses, so the worst case is
-// that budget plus one in-flight batch (TMDB_TIMEOUT_MS). The stats response is
-// never held hostage to a slow or failing TMDB, even on a cold cache. Names that
-// did resolve before the budget ran out are still returned.
+// that budget plus one in-flight batch (TMDB_TIMEOUT_MS) — i.e. ~12s, not 8s. The
+// stats response is never held hostage to a slow or failing TMDB, even on a cold
+// cache. Names that did resolve before the budget ran out are still returned.
 async function resolveNames(ids) {
   if (!TMDB_ENABLED || tmdbAuthFailed) return {};
   const missing = ids.filter((id) => !nameCache.has(id));
