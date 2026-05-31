@@ -45,14 +45,25 @@ describe("POST /v1/forget", () => {
       body: JSON.stringify({ pseudonym: psn }),
     });
     expect(res.status).toBe(200);
-    const json = (await res.json()) as { rows_deleted: number };
+    const json = (await res.json()) as { rows_deleted: number; canonical_unaffected: boolean };
     expect(json.rows_deleted).toBeGreaterThan(0);
+    expect(json.canonical_unaffected).toBe(true);
 
-    const remaining = await env.DB.prepare(
+    const remainingContributions = await env.DB.prepare(
       `SELECT COUNT(*) AS n FROM contribution WHERE pseudonym = ?`,
     )
       .bind(psn)
       .first<{ n: number }>();
-    expect(remaining?.n).toBe(0);
+    expect(remainingContributions?.n).toBe(0);
+
+    // Privacy erasure must clear the contributor row too — not just contributions.
+    // A surviving contributor row (pseudonym, flagged, flag_count) is a partial
+    // erasure failure.
+    const remainingContributor = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM contributor WHERE pseudonym = ?`,
+    )
+      .bind(psn)
+      .first<{ n: number }>();
+    expect(remainingContributor?.n).toBe(0);
   });
 });
