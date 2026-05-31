@@ -884,6 +884,14 @@ th.num {
 .id-cell {
   color: var(--cyan);
 }
+.show-name {
+  color: var(--text);
+  font-weight: 600;
+}
+.show-id {
+  color: var(--text-dim);
+  font-size: 11px;
+}
 .mono-dim {
   color: var(--text-dim);
 }
