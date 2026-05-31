@@ -10,6 +10,15 @@ import {
 import { ContributionRequestSchema } from "../schemas";
 
 export async function handleContribute(request: Request, env: Env): Promise<Response> {
+  // Fail loud on a misconfigured threshold. parseFloat of a missing/non-numeric
+  // value yields NaN, and every `> NaN` comparison below is false — which would
+  // SILENTLY disable the anti-poison screen and pass every contribution. Validate
+  // up front so a stripped env or a typo surfaces as a 500 instead of bad data.
+  const threshold = parseFloat(env.POISON_CONFLICT_THRESHOLD);
+  if (!Number.isFinite(threshold) || threshold <= 0 || threshold > 1) {
+    return new Response("misconfigured server: POISON_CONFLICT_THRESHOLD invalid", { status: 500 });
+  }
+
   let body: unknown;
   try {
     body = await request.json();
@@ -70,7 +79,7 @@ export async function handleContribute(request: Request, env: Env): Promise<Resp
   // Two-stage anti-poison: screen + exact confirm.
   // exactOverlap is exact-membership only (issue #3), so this threshold governs
   // verbatim hash overlap; independently re-decoded content may fall below it.
-  const threshold = parseFloat(env.POISON_CONFLICT_THRESHOLD);
+  // `threshold` is parsed and validated at the top of this function.
   const screenThreshold = threshold - 0.1;
   let poisonCheck: "pass" | "flag_conflict" = "pass";
   let exactPct = screen.maxOverlapEstimate;
