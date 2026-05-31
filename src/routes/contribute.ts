@@ -26,6 +26,20 @@ export async function handleContribute(request: Request, env: Env): Promise<Resp
   }
   const req = parsed.data;
 
+  // Per-pseudonym safety valve: a generous circuit-breaker against runaway
+  // loops / casual hammering. Optional binding — absent in local dev and the
+  // vitest workers pool, so those paths skip it. Placed after schema validation
+  // (so we have req.pseudonym) and before the expensive decode/minhash/insert.
+  if (env.CONTRIBUTE_RATE_LIMITER) {
+    const { success } = await env.CONTRIBUTE_RATE_LIMITER.limit({ key: req.pseudonym });
+    if (!success) {
+      return new Response("rate limited", {
+        status: 429,
+        headers: { "Retry-After": "60" },
+      });
+    }
+  }
+
   const contributor = await getContributor(env.DB, req.pseudonym);
   if (contributor?.flagged === 1) {
     return Response.json(
@@ -115,4 +129,8 @@ export interface Env {
   POISON_CONFLICT_THRESHOLD: string;
   IDENTIFY_MIN_SCORE?: string;
   ALLOW_DEV_SEED?: string;
+  // Optional per-pseudonym rate limiter (Cloudflare Workers Rate-Limiting
+  // binding). Absent in local dev and the vitest workers pool — guarded at the
+  // call site so those paths proceed without it.
+  CONTRIBUTE_RATE_LIMITER?: RateLimit;
 }
