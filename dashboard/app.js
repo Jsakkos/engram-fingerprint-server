@@ -1,3 +1,5 @@
+import { escapeHtml } from "./escape.mjs";
+
 // engram signal lab — client renderer (vanilla, no deps)
 
 const COLORS = { green: "#7cffb2", cyan: "#5ad1ff", amber: "#ffc857" };
@@ -121,9 +123,9 @@ function render(d) {
   renderTierLadder(d);
   renderSources(d.matchSources);
   renderPoison(d);
-  renderShows(d.topShows);
+  renderShows(d.topShows, d.names);
   renderContributors(d.topContributors);
-  renderFeed(d.recent);
+  renderFeed(d.recent, d.names);
 }
 
 function renderEmptyAll() {
@@ -410,7 +412,17 @@ function renderPoison(d) {
   animateBars(host);
 }
 
-function renderShows(shows) {
+// The "Show" identity cell: the resolved name (escaped — it is external text)
+// as the primary label with a dim tmdb id beneath it, or just the id when no
+// name resolved.
+function showCell(tmdbId, names) {
+  const name = names?.[tmdbId];
+  return name
+    ? `<td><div class="show-name">${escapeHtml(name)}</div><div class="show-id">tmdb:${tmdbId}</div></td>`
+    : `<td class="id-cell">tmdb:${tmdbId}</td>`;
+}
+
+function renderShows(shows, names) {
   const host = $("showsTable");
   if (!shows.length) {
     host.innerHTML = '<div class="empty-state">no episodes tracked yet</div>';
@@ -423,7 +435,7 @@ function renderShows(shows) {
         v ? `<i class="mb-${cls}" style="width:${(v / total) * 100}%"></i>` : "";
       return (
         "<tr>" +
-        `<td class="id-cell">tmdb:${s.tmdb_id}</td>` +
+        showCell(s.tmdb_id, names) +
         `<td class="num">${fmtNum(s.episodes)}</td>` +
         `<td><span class="minibar">${seg("canonical", s.canonical)}${seg("confirmed", s.confirmed)}${seg("candidate", s.candidate)}</span></td>` +
         `<td class="num">${fmtNum(s.canonical)}</td>` +
@@ -471,7 +483,7 @@ function epLabel(r) {
   return `${s}${e}`;
 }
 
-function renderFeed(recent) {
+function renderFeed(recent, names) {
   const host = $("feed");
   if (!recent.length) {
     host.innerHTML = '<div class="empty-state">no contributions recorded yet</div>';
@@ -481,10 +493,14 @@ function renderFeed(recent) {
     .map((r, i) => {
       const src = SOURCE_LABELS[r.match_source] || r.match_source;
       const promoted = r.promoted ? '<span class="promoted-mark" title="promoted">▲</span>' : "";
+      const name = names?.[r.tmdb_id];
+      const showSpan = name
+        ? `<span class="show">${escapeHtml(name)}</span> <span class="show-id">tmdb:${r.tmdb_id}</span>`
+        : `<span class="show">tmdb:${r.tmdb_id}</span>`;
       return (
         `<div class="feed-row" style="animation-delay:${Math.min(i * 25, 400)}ms">` +
         `<span class="feed-time">${relTime(r.received_at)}</span>` +
-        `<span class="feed-ep"><span class="show">tmdb:${r.tmdb_id}</span> ${epLabel(r)}${promoted}</span>` +
+        `<span class="feed-ep">${showSpan} ${epLabel(r)}${promoted}</span>` +
         `<span class="feed-src">${src}</span>` +
         `<span class="feed-conf">${r.match_confidence.toFixed(2)}</span>` +
         `<span class="feed-tag"><span class="tag ${r.poison_check}">${r.poison_check.replace("flag_", "")}</span></span>` +
