@@ -14,6 +14,16 @@ database_id = "6d2bc3e1-aca7-4212-8160-fd668c866ffb"
 binding = "PACKS"
 bucket_name = "engram-fp-packs"
 
+# Per-pseudonym rate-limit safety valve for POST /v1/contribute. Ceiling sits
+# ABOVE an honest client's peak (client _CONCURRENCY=5 ≈ 300–600 req/min) so real
+# users never hit it — the limiter only bites on pathological rates. Best-effort
+# per-colo counting; a circuit-breaker, not a security control. Read as optional
+# in code (if (env.CONTRIBUTE_RATE_LIMITER)). period ∈ {10, 60}.
+[[ratelimits]]
+name = "CONTRIBUTE_RATE_LIMITER"
+namespace_id = "1001"
+simple = { limit = 600, period = 60 }
+
 # Tunable thresholds (no redeploy needed to change).
 # IDENTIFY_MIN_SCORE: minimum combined_score for a /v1/identify candidate to be
 # returned — below it the server reports no confident match (issue #3).
