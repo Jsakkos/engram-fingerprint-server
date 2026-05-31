@@ -86,6 +86,24 @@ describe("dashboard transform", () => {
     expect(shapePayload(sets as unknown[][]).totals.contributions).toBe(201);
   });
 
+  it("ignores trailing output that contains a stray ] after the array", () => {
+    // A trailing notice with its own "]" must not extend the parsed slice —
+    // lastIndexOf("]") would have grabbed it; forward bracket-matching stops at
+    // the array's real close.
+    const noisy = `${wrangler(SETS)}\n⚡ Uploaded to bucket [workers-dev]`;
+    const sets = parseWranglerJson(noisy);
+    expect(sets).not.toBeNull();
+    expect(shapePayload(sets as unknown[][]).totals.contributions).toBe(201);
+  });
+
+  it("truncates contributor pseudonyms to an 8-char prefix", () => {
+    const sets = parseWranglerJson(wrangler(SETS));
+    const d = shapePayload(sets as unknown[][]);
+    // Full fixture pseudonym is "9e0fad8d-aaaa"; only the prefix may escape.
+    expect(d.topContributors[0].pseudonym).toBe("9e0fad8d");
+    expect(d.topContributors[0].pseudonym).not.toContain("aaaa");
+  });
+
   // Regression guard for the silent-zeros bug: a multi-statement `--file` run
   // against REMOTE D1 returns an execution summary, not per-statement results.
   it("detects wrangler's execution-summary response (the --remote/--file trap)", () => {

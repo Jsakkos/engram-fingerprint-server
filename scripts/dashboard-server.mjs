@@ -10,7 +10,7 @@
 //   pnpm dashboard   ->   http://127.0.0.1:8788
 
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { extname, join, resolve } from "node:path";
@@ -53,23 +53,21 @@ function resolveWranglerEntry() {
   }
 }
 
-function runWrangler(source) {
+async function runWrangler(source) {
+  const entry = resolveWranglerEntry();
+  if (!entry) {
+    return {
+      ok: false,
+      error: "wrangler is not installed. Run `pnpm install` in the repo root first.",
+    };
+  }
+  let sql;
+  try {
+    sql = await readFile(QUERIES_FILE, "utf8");
+  } catch (err) {
+    return { ok: false, error: `Could not read ${QUERIES_FILE}: ${err.message}` };
+  }
   return new Promise((res) => {
-    const entry = resolveWranglerEntry();
-    if (!entry) {
-      res({
-        ok: false,
-        error: "wrangler is not installed. Run `pnpm install` in the repo root first.",
-      });
-      return;
-    }
-    let sql;
-    try {
-      sql = readFileSync(QUERIES_FILE, "utf8");
-    } catch (err) {
-      res({ ok: false, error: `Could not read ${QUERIES_FILE}: ${err.message}` });
-      return;
-    }
     const flag = source === "remote" ? "--remote" : "--local";
     // Pass the SQL via `--command=` rather than `--file`. Against REMOTE D1, a
     // multi-statement `--file` returns only an execution summary (Total queries

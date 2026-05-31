@@ -36,17 +36,29 @@ export function parseWranglerJson(stdout) {
       return null;
     }
   };
-  // wrangler --json usually prints a clean array, but tolerate leading notices
-  // by extracting from the first "[" to the last "]".
+  // wrangler --json usually prints a clean array, but tolerate surrounding notices
+  // (it emits "├ Checking…" lines) by extracting the first bracket-balanced array.
+  // tryParse returns null only on failure, so test the sentinel explicitly — a
+  // legitimately-parsed `false`/`0` should not re-trigger extraction.
   let parsed = tryParse(stdout.trim());
-  if (!parsed) {
-    const start = stdout.indexOf("[");
-    const end = stdout.lastIndexOf("]");
-    if (start !== -1 && end > start) parsed = tryParse(stdout.slice(start, end + 1));
-  }
+  if (parsed === null) parsed = tryParse(extractFirstArray(stdout) ?? "");
   if (!Array.isArray(parsed)) return null;
   // Each element is { results, success, meta } — normalise to just the rows.
   return parsed.map((entry) => (Array.isArray(entry?.results) ? entry.results : entry));
+}
+
+// Return the substring spanning the first bracket-balanced [...] in `text`, or null.
+// Tracking the matching close bracket forward (rather than lastIndexOf("]")) stops a
+// trailing notice line that happens to contain "]" from corrupting the slice.
+function extractFirstArray(text) {
+  const start = text.indexOf("[");
+  if (start === -1) return null;
+  let depth = 0;
+  for (let i = start; i < text.length; i++) {
+    if (text[i] === "[") depth++;
+    else if (text[i] === "]" && --depth === 0) return text.slice(start, i + 1);
+  }
+  return null;
 }
 
 // Detect wrangler's "execution summary" response. Running a multi-statement file
@@ -132,7 +144,10 @@ export function shapePayload(sets) {
       avg_conf: num(r.avg_conf),
     })),
     topContributors: (get("topContributors") ?? []).map((r) => ({
-      pseudonym: r.pseudonym,
+      // Only the 8-char prefix leaves the storage layer — the UI shows just the
+      // prefix, and full pseudonyms must not land in the /api/stats JSON, DevTools,
+      // or logs. Mirrors the `pseudonym_prefix` redaction used elsewhere.
+      pseudonym: r.pseudonym ? String(r.pseudonym).slice(0, 8) : null,
       count: num(r.contribution_count),
       flagged: num(r.flagged) === 1,
       flag_count: num(r.flag_count),
