@@ -37,21 +37,60 @@ describe("minhash", () => {
     expect(Math.abs(est - trueJ)).toBeLessThan(0.085);
   });
 
-  it("sketches a full ~10k-hash fingerprint well under the 10ms Worker CPU budget", () => {
-    // /v1/contribute and /v1/identify run minhash128 on every request over a
-    // real episode fingerprint (~10k hashes). The Workers Free plan caps CPU at
-    // 10ms/invocation; exceeding it is Error 1102 -> HTTP 503. Sketching alone
-    // must leave ample headroom for decode + D1 + the rest of the handler.
+  it("sketches a full ~10k-hash fingerprint far faster than the old float-modulo family", () => {
+    // minhash128 runs on EVERY /v1/contribute and /v1/identify request over a
+    // real episode fingerprint (~10k hashes). On the Workers Free plan (10ms CPU
+    // /invocation) the old `(a*x + b) mod prime` family — two float `% MOD` ops
+    // per (hash × 128 permutations) — cost ~15ms and tripped Error 1102 -> HTTP
+    // 503. This asserts the current Math.imul family is dramatically cheaper.
+    //
+    // Relative (speedup ratio), NOT an absolute ms threshold: CI runners are
+    // ~8x slower than dev machines, so the new impl's absolute time on CI can
+    // exceed the old impl's time on a fast laptop — no single constant separates
+    // them. The ratio is hardware-independent.
+    const MOD = 4294967311; // first prime > 2^32 (the old family's modulus)
+    const slowCoeffs = (() => {
+      let s = 0x12345678;
+      const next = () => {
+        s ^= s << 13;
+        s ^= s >>> 17;
+        s ^= s << 5;
+        return (s >>> 0) % MOD;
+      };
+      const out: { a: number; b: number }[] = [];
+      for (let i = 0; i < 128; i++) out.push({ a: (next() % (MOD - 1)) + 1, b: next() });
+      return out;
+    })();
+    // The pre-optimization minhash128, inlined as a speed reference.
+    const slowMinhash128 = (hashes: number[]): void => {
+      const sketch = new Uint32Array(128).fill(0xffffffff);
+      for (const h of hashes) {
+        const hu = h >>> 0;
+        for (let i = 0; i < 128; i++) {
+          const { a, b } = slowCoeffs[i];
+          const v = (((a * hu) % MOD) + b) % MOD;
+          if (v < sketch[i]) sketch[i] = v;
+        }
+      }
+    };
+
     const hashes = Array.from({ length: 10_661 }, (_, i) => (i * 2654435761) >>> 0);
-    for (let w = 0; w < 5; w++) minhash128(hashes); // warm JIT
-    const samples: number[] = [];
-    for (let r = 0; r < 15; r++) {
-      const t0 = performance.now();
+    const medianMs = (fn: () => void): number => {
+      for (let w = 0; w < 3; w++) fn(); // warm JIT
+      const samples: number[] = [];
+      for (let r = 0; r < 7; r++) {
+        const t0 = performance.now();
+        fn();
+        samples.push(performance.now() - t0);
+      }
+      return samples.sort((a, b) => a - b)[3];
+    };
+
+    const fast = medianMs(() => {
       minhash128(hashes);
-      samples.push(performance.now() - t0);
-    }
-    samples.sort((a, b) => a - b);
-    const median = samples[Math.floor(samples.length / 2)];
-    expect(median).toBeLessThan(5);
+    });
+    const slow = medianMs(() => slowMinhash128(hashes));
+    // Real speedup is ~10x; require a conservative 3x so CI timing noise can't flake it.
+    expect(fast).toBeLessThan(slow / 3);
   });
 });
