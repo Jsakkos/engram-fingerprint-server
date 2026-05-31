@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { isSummaryResponse, parseWranglerJson, shapePayload } from "../dashboard/transform.mjs";
+import {
+  distinctShowIds,
+  isSummaryResponse,
+  parseWranglerJson,
+  shapePayload,
+} from "../dashboard/transform.mjs";
 
 // Wrap result-set rows the way `wrangler d1 execute --json` does: an array of
 // { results, success, meta } envelopes, one per statement.
@@ -125,5 +130,25 @@ describe("dashboard transform", () => {
     const d = shapePayload(sets as unknown[][]);
     expect(d.totals.contributions).toBe(0);
     expect(d.totals.episodes).toBe(0);
+  });
+});
+
+describe("distinctShowIds", () => {
+  it("returns the sorted union of tmdb_ids across topShows and recent", () => {
+    const data = {
+      topShows: [{ tmdb_id: 655 }, { tmdb_id: 1399 }],
+      recent: [{ tmdb_id: 1399 }, { tmdb_id: 12 }],
+    };
+    expect(distinctShowIds(data)).toEqual([12, 655, 1399]);
+  });
+
+  it("returns an empty array for empty or missing collections", () => {
+    expect(distinctShowIds({ topShows: [], recent: [] })).toEqual([]);
+    expect(distinctShowIds({})).toEqual([]);
+  });
+
+  it("ignores falsy/zero ids", () => {
+    const data = { topShows: [{ tmdb_id: 0 }, { tmdb_id: 42 }], recent: [{}] };
+    expect(distinctShowIds(data)).toEqual([42]);
   });
 });

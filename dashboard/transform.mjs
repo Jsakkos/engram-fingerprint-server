@@ -167,3 +167,15 @@ export function shapePayload(sets) {
     })),
   };
 }
+
+// Distinct tmdb_ids referenced by the dashboard payload's show table and live
+// feed, sorted ascending. The server uses this to resolve names from TMDB; it
+// lives here (pure, IO-free) so it is covered by the transform test suite.
+// tmdb_id is always a positive integer (see migrations/001_initial.sql), so a
+// falsy/zero id is never a real show and is skipped.
+export function distinctShowIds(data) {
+  const ids = new Set();
+  for (const s of data?.topShows ?? []) if (s?.tmdb_id) ids.add(s.tmdb_id);
+  for (const r of data?.recent ?? []) if (r?.tmdb_id) ids.add(r.tmdb_id);
+  return [...ids].sort((a, b) => a - b);
+}
