@@ -102,3 +102,23 @@ PR / push to main ──▶ CI (.github/workflows/ci.yml)
 | `CLOUDFLARE_API_TOKEN` | Deploy (migrate + deploy) |
 | `CLOUDFLARE_ACCOUNT_ID` | Deploy (migrate + deploy) |
 | `CLAUDE_CODE_OAUTH_TOKEN` | Code Review |
+
+## Regenerating canonical sketches (after a MinHash change)
+
+`canonical_sketch` rows are `minhash128(fingerprint)`. **If you change the MinHash
+family in `src/minhash.ts`, every stored sketch becomes inconsistent with freshly
+computed query/candidate sketches** — `/v1/identify` and the anti-poison screen then
+see near-zero Jaccard and silently stop matching until the rows are recomputed.
+
+Deploy is automated (`workflow_run` on a green `main`), so the new Worker goes live on
+merge while the stored sketches are still old-family. Run the regeneration **right after
+that deploy completes** to keep the degraded window short:
+
+```bash
+node scripts/regenerate-canonical-sketches.mjs --remote          # dry run (read-only)
+node scripts/regenerate-canonical-sketches.mjs --remote --apply  # write
+```
+
+It imports the production `minhash128` (no drift) and UPSERTs every `canonical_sketch`
+from its `episode_canonical.fingerprint`. This is a one-off per MinHash change, not a
+per-deploy step.
