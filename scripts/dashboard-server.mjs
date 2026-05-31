@@ -189,11 +189,15 @@ function explainWranglerFailure(message, source, code) {
 // ---- tmdb name resolution ---------------------------------------------------
 
 // id -> name (string) | null. null records a confirmed 404 so we never re-fetch
-// an unknown id. Lives for the process lifetime; names don't change. Transient
-// failures (network, timeout, auth) are deliberately NOT cached so a later
-// refresh retries them.
+// an unknown id; a resolved name is cached as its string. Lives for the process
+// lifetime; names don't change. Transient failures (network, timeout, 429/5xx)
+// are deliberately NOT cached so a later refresh retries them.
 const nameCache = new Map();
 const warnedOnce = new Set();
+// A 401 means the configured credential is bad. Credentials are read once at
+// startup, so this can't self-correct at runtime — latch it and skip resolution
+// entirely rather than re-burning the whole TMDB budget on every refresh.
+let tmdbAuthFailed = false;
 
 function warnOnce(message) {
   if (warnedOnce.has(message)) return;
@@ -217,12 +221,18 @@ async function fetchShowName(id) {
     }
     if (res.status === 401) {
       warnOnce("TMDB rejected the credential (401) — check TMDB_READ_ACCESS_TOKEN / TMDB_API_KEY.");
-      return; // do NOT cache — a corrected credential should retry
+      tmdbAuthFailed = true; // bad credential won't self-correct — stop trying
+      return;
     }
-    if (!res.ok) return; // transient — do NOT cache
+    if (!res.ok) {
+      // 429 / 5xx etc. — transient, do NOT cache. Surface once so rate-limit or
+      // outage problems aren't completely invisible.
+      warnOnce(`TMDB returned HTTP ${res.status} — show names may be incomplete.`);
+      return;
+    }
     const body = await res.json();
     const name = typeof body?.name === "string" ? body.name.trim() : "";
-    nameCache.set(id, name || null);
+    if (name) nameCache.set(id, name); // empty/blank name: leave uncached, may retry
   } catch {
     // network error or abort/timeout — do NOT cache, retry next refresh
   } finally {
@@ -237,11 +247,11 @@ async function fetchShowName(id) {
 // never held hostage to a slow or failing TMDB, even on a cold cache. Names that
 // did resolve before the budget ran out are still returned.
 async function resolveNames(ids) {
-  if (!TMDB_ENABLED) return {};
+  if (!TMDB_ENABLED || tmdbAuthFailed) return {};
   const missing = ids.filter((id) => !nameCache.has(id));
   const deadline = Date.now() + TMDB_TOTAL_BUDGET_MS;
   for (let i = 0; i < missing.length; i += TMDB_CONCURRENCY) {
-    if (Date.now() >= deadline) break;
+    if (tmdbAuthFailed || Date.now() >= deadline) break;
     await Promise.all(missing.slice(i, i + TMDB_CONCURRENCY).map(fetchShowName));
   }
   const names = {};
