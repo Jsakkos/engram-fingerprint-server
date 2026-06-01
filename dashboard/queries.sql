@@ -11,6 +11,7 @@ SELECT COUNT(*) AS n FROM contribution;
 SELECT poison_check, COUNT(*) AS n FROM contribution WHERE promoted_at IS NULL GROUP BY poison_check;
 
 -- [2] contributions eligible for the nightly promotion cron (pass check + confidence threshold)
+-- Keep 0.70 in sync with MIN_PROMOTION_CONFIDENCE in src/workers/promotion.ts
 SELECT COUNT(*) AS n FROM contribution WHERE promoted_at IS NULL AND poison_check = 'pass' AND match_confidence >= 0.70;
 
 -- [3] episodes by promotion tier
