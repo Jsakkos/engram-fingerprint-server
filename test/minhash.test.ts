@@ -24,13 +24,86 @@ describe("minhash", () => {
     expect(jaccardEstimate(a, b)).toBeLessThan(0.1);
   });
 
-  it("jaccardEstimate within ±0.05 of true Jaccard for 50%-overlapping sets", () => {
+  it("jaccardEstimate is within minhash sampling error of true Jaccard for 50%-overlapping sets", () => {
     // Two sets sharing exactly half their elements
     const setA = Array.from({ length: 200 }, (_, i) => i); // 0..199
     const setB = Array.from({ length: 200 }, (_, i) => i + 100); // 100..299
     // True Jaccard = |intersection| / |union| = 100 / 300 = 0.333
-    const estA = jaccardEstimate(minhash128(setA), minhash128(setB));
-    expect(estA).toBeGreaterThan(0.28);
-    expect(estA).toBeLessThan(0.39);
+    const trueJ = 1 / 3;
+    const est = jaccardEstimate(minhash128(setA), minhash128(setB));
+    // Tolerance = ~2σ of a 128-permutation minhash estimate:
+    // σ = sqrt(J(1-J)/128) ≈ 0.042 at J=1/3, so 2σ ≈ 0.084. A tighter window
+    // (e.g. ±0.05 ≈ 1.2σ) is breached ~23% of the time by a *correct* estimator.
+    expect(Math.abs(est - trueJ)).toBeLessThan(0.085);
+  });
+
+  it("sketches a full ~10k-hash fingerprint far faster than the old float-modulo family", () => {
+    // minhash128 runs on EVERY /v1/contribute and /v1/identify request over a
+    // real episode fingerprint (~10k hashes). On the Workers Free plan (10ms CPU
+    // /invocation) the old `(a*x + b) mod prime` family — two float `% MOD` ops
+    // per (hash × 128 permutations) — cost ~15ms and tripped Error 1102 -> HTTP
+    // 503. This asserts the current Math.imul family is dramatically cheaper.
+    //
+    // Relative (speedup ratio), NOT an absolute ms threshold: CI runners are
+    // ~8x slower than dev machines, so the new impl's absolute time on CI can
+    // exceed the old impl's time on a fast laptop — no single constant separates
+    // them. The ratio is hardware-independent.
+    const MOD = 4294967311; // first prime > 2^32 (the old family's modulus)
+    const slowCoeffs = (() => {
+      let s = 0x12345678;
+      const next = () => {
+        s ^= s << 13;
+        s ^= s >>> 17;
+        s ^= s << 5;
+        return (s >>> 0) % MOD;
+      };
+      const out: { a: number; b: number }[] = [];
+      for (let i = 0; i < 128; i++) out.push({ a: (next() % (MOD - 1)) + 1, b: next() });
+      return out;
+    })();
+    // The pre-optimization minhash128, inlined as a speed reference.
+    const slowMinhash128 = (hashes: number[]): void => {
+      const sketch = new Uint32Array(128).fill(0xffffffff);
+      for (const h of hashes) {
+        const hu = h >>> 0;
+        for (let i = 0; i < 128; i++) {
+          const { a, b } = slowCoeffs[i];
+          const v = (((a * hu) % MOD) + b) % MOD;
+          if (v < sketch[i]) sketch[i] = v;
+        }
+      }
+    };
+
+    const hashes = Array.from({ length: 10_661 }, (_, i) => (i * 2654435761) >>> 0);
+    // Use the FASTEST of several runs, not the median: on shared CI vCPUs a
+    // scheduler spike only ever *adds* time, so the minimum approximates the true
+    // compute cost with contention filtered out. Both families are timed the same
+    // way back-to-back, so the ratio is stable even on a loaded runner.
+    const fastestMs = (fn: () => void): number => {
+      for (let w = 0; w < 3; w++) fn(); // warm JIT
+      let best = Number.POSITIVE_INFINITY;
+      for (let r = 0; r < 9; r++) {
+        const t0 = performance.now();
+        fn();
+        best = Math.min(best, performance.now() - t0);
+      }
+      return best;
+    };
+
+    const fast = fastestMs(() => {
+      minhash128(hashes);
+    });
+    const slow = fastestMs(() => slowMinhash128(hashes));
+    // The real speedup is ~10-15x. We assert only a conservative 2x because the
+    // fast path's true cost (sub-millisecond) is BELOW workerd's ~1ms timer
+    // resolution, so `fast` is effectively quantized noise (observed: 1-4ms): a
+    // single scheduler hiccup on a loaded CI vCPU rounds the short op up several
+    // ms and collapses the *measured* ratio far below the real one. A 3x gate sat
+    // inside that noise band and flaked at the exact boundary (fast=17, slow=51 ->
+    // slow/3==17, and 17<17 is false). 2x stays comfortably under the genuine
+    // 10-15x speedup yet still fails loudly if the old `(a*x+b) mod prime` family
+    // (~1x, no speedup) ever returns. Magnitude can't help here — slow is ~15x
+    // fast, so making `fast` clear the 1ms floor would push `slow` into seconds.
+    expect(fast).toBeLessThan(slow / 2);
   });
 });
