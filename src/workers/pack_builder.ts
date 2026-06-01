@@ -17,17 +17,23 @@ export async function runPackBuilder(env: Env): Promise<void> {
   }
 }
 
-async function runSketchBuilder(env: Env): Promise<void> {
-  // Find episodes missing a sketch or whose canonical was re-promoted after the last sketch.
-  // LIMIT 100 keeps memory bounded (all fingerprint BLOBs load into .results at once) and
-  // stays inside the cron's ~63-sketch CPU ceiling; subsequent 4 AM runs drain the rest.
+/**
+ * Compute minhash sketches for episodes that are missing one or have a stale sketch
+ * (sketch older than the episode's last promotion). Processes canonical tier first
+ * to prioritise identify quality for the most trusted episodes.
+ * TODO: LIMIT 100 means the backlog grows if intake exceeds 100 new episodes/day;
+ *       migrate to Cloudflare Queues to give each sketch its own CPU budget.
+ */
+export async function runSketchBuilder(env: Env): Promise<void> {
   // initCodec() is not called explicitly — decodeZstdVarint() calls it internally.
   const episodes = await env.DB.prepare(
     `SELECT ec.tmdb_id, ec.season, ec.episode, ec.fingerprint
      FROM episode_canonical ec
      LEFT JOIN canonical_sketch cs
        ON ec.tmdb_id = cs.tmdb_id AND ec.season IS cs.season AND ec.episode IS cs.episode
-     WHERE cs.tmdb_id IS NULL OR cs.generated_at < ec.promoted_at
+     WHERE cs.tmdb_id IS NULL OR cs.generated_at <= ec.promoted_at
+     ORDER BY CASE ec.tier WHEN 'canonical' THEN 0 WHEN 'confirmed' THEN 1 ELSE 2 END,
+              ec.promoted_at ASC
      LIMIT 100`,
   ).all<{
     tmdb_id: number;
