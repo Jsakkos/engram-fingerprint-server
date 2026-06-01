@@ -29,49 +29,25 @@ describe("PackBuilderWorker", () => {
     expect(bytes.byteLength).toBeGreaterThan(0);
   });
 
-  it("computes canonical_sketch for promoted episodes (all tiers)", async () => {
-    // Seed a candidate-tier episode (pack_builder won't build an R2 pack for it,
-    // but the sketch builder should still compute the minhash sketch).
-    const blob = await encodeZstdVarint([100, 200, 300]);
+  it("does NOT compute sketches - sketch building is decoupled into its own cron", async () => {
+    // Sketch computation (minhash, ~475ms/episode) now runs in its own hourly cron via
+    // runSketchBuilder, NOT piggybacked on the daily pack build. Running the pack builder
+    // must leave canonical_sketch untouched.
+    const blob = await encodeZstdVarint([501, 502, 503]);
     await env.DB.prepare(
       `INSERT INTO episode_canonical (tmdb_id, season, episode, tier, fingerprint, unique_contributors, mean_confidence, promoted_at)
-       VALUES (?, ?, ?, 'candidate', ?, 1, 0.8, unixepoch())`,
+       VALUES (?, ?, ?, 'canonical', ?, 3, 0.9, unixepoch())`,
     )
-      .bind(77700, 1, 1, blob)
+      .bind(91000, 1, 1, blob)
       .run();
 
     await runPackBuilder(env);
 
-    const sketch = await env.DB.prepare(
-      `SELECT hash_count FROM canonical_sketch WHERE tmdb_id = 77700 AND season = 1 AND episode = 1`,
-    ).first<{ hash_count: number }>();
-    expect(sketch).not.toBeNull();
-    expect(sketch?.hash_count).toBe(3);
-  });
-
-  it("refreshes a stale sketch when canonical fingerprint is re-promoted", async () => {
-    // Insert episode with an old sketch timestamp
-    const blob = await encodeZstdVarint([1, 2, 3, 4, 5]);
-    await env.DB.prepare(
-      `INSERT INTO episode_canonical (tmdb_id, season, episode, tier, fingerprint, unique_contributors, mean_confidence, promoted_at)
-       VALUES (?, ?, ?, 'candidate', ?, 1, 0.8, unixepoch())`,
-    )
-      .bind(77701, 1, 1, blob)
-      .run();
-    // Insert a sketch with a timestamp BEFORE promoted_at to simulate staleness
-    await env.DB.prepare(
-      `INSERT INTO canonical_sketch (tmdb_id, season, episode, sketch, hash_count, generated_at)
-       VALUES (?, ?, ?, ?, ?, 1)`,
-    )
-      .bind(77701, 1, 1, new Uint8Array(128 * 4), 999)
-      .run();
-
-    await runPackBuilder(env);
-
-    const sketch = await env.DB.prepare(
-      `SELECT hash_count FROM canonical_sketch WHERE tmdb_id = 77701 AND season = 1 AND episode = 1`,
-    ).first<{ hash_count: number }>();
-    expect(sketch?.hash_count).toBe(5); // updated to match the current fingerprint
+    // The pack builder no longer writes sketches — that is runSketchBuilder's job now.
+    const row = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM canonical_sketch WHERE tmdb_id = 91000 AND season = 1 AND episode = 1`,
+    ).first<{ n: number }>();
+    expect(row?.n).toBe(0);
   });
 
   it("does not write packs for shows with only CANDIDATE/CONFIRMED episodes", async () => {
@@ -117,6 +93,50 @@ describe("PackBuilderWorker", () => {
 });
 
 describe("runSketchBuilder", () => {
+  it("computes canonical_sketch for promoted episodes (all tiers)", async () => {
+    // A candidate-tier episode gets no R2 pack, but the sketch builder must still
+    // compute its minhash sketch so identify can match it.
+    const blob = await encodeZstdVarint([100, 200, 300]);
+    await env.DB.prepare(
+      `INSERT INTO episode_canonical (tmdb_id, season, episode, tier, fingerprint, unique_contributors, mean_confidence, promoted_at)
+       VALUES (?, ?, ?, 'candidate', ?, 1, 0.8, unixepoch())`,
+    )
+      .bind(77700, 1, 1, blob)
+      .run();
+
+    await runSketchBuilder(env);
+
+    const sketch = await env.DB.prepare(
+      `SELECT hash_count FROM canonical_sketch WHERE tmdb_id = 77700 AND season = 1 AND episode = 1`,
+    ).first<{ hash_count: number }>();
+    expect(sketch).not.toBeNull();
+    expect(sketch?.hash_count).toBe(3);
+  });
+
+  it("refreshes a stale sketch when the canonical fingerprint is re-promoted", async () => {
+    const blob = await encodeZstdVarint([1, 2, 3, 4, 5]);
+    await env.DB.prepare(
+      `INSERT INTO episode_canonical (tmdb_id, season, episode, tier, fingerprint, unique_contributors, mean_confidence, promoted_at)
+       VALUES (?, ?, ?, 'candidate', ?, 1, 0.8, unixepoch())`,
+    )
+      .bind(77701, 1, 1, blob)
+      .run();
+    // Sketch with generated_at BEFORE promoted_at — stale.
+    await env.DB.prepare(
+      `INSERT INTO canonical_sketch (tmdb_id, season, episode, sketch, hash_count, generated_at)
+       VALUES (?, ?, ?, ?, ?, 1)`,
+    )
+      .bind(77701, 1, 1, new Uint8Array(128 * 4), 999)
+      .run();
+
+    await runSketchBuilder(env);
+
+    const sketch = await env.DB.prepare(
+      `SELECT hash_count FROM canonical_sketch WHERE tmdb_id = 77701 AND season = 1 AND episode = 1`,
+    ).first<{ hash_count: number }>();
+    expect(sketch?.hash_count).toBe(5); // updated to match the current fingerprint
+  });
+
   it("processes canonical tier before candidate tier within the LIMIT window", async () => {
     const blob = await encodeZstdVarint([1, 2, 3]);
     // One candidate that should be pushed past LIMIT 100 by higher-priority rows.
