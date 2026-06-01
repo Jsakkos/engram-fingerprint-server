@@ -9,7 +9,26 @@ import {
 } from "../db_anti_poison";
 import { ContributionRequestSchema } from "../schemas";
 
+// The cheap MinHash pre-screen fires above (threshold - SCREEN_MARGIN); the exact check then
+// confirms above `threshold`. The margin absorbs the gap between the MinHash Jaccard estimate
+// and the exact overlap, and it bounds the valid threshold range (see handleContribute).
+const SCREEN_MARGIN = 0.1;
+
 export async function handleContribute(request: Request, env: Env): Promise<Response> {
+  // Fail loud on a misconfigured threshold rather than silently corrupting the canonical set.
+  // parseFloat of a missing/non-numeric value is NaN, and every `> NaN` below is false — which
+  // would disable the screen. A value below SCREEN_MARGIN drives screenThreshold negative
+  // (maxOverlapEstimate >= 0 always clears it, collapsing the cheap screen), and a value >= 1
+  // makes the exact check `exactPct > threshold` unsatisfiable (exactOverlap maxes at 1.0).
+  // Any of these is a deploy error — refuse, log the detail, and keep the response generic.
+  const threshold = parseFloat(env.POISON_CONFLICT_THRESHOLD ?? "");
+  if (!Number.isFinite(threshold) || threshold < SCREEN_MARGIN || threshold >= 1) {
+    console.error(
+      `POISON_CONFLICT_THRESHOLD missing or out of [${SCREEN_MARGIN}, 1) (got ${JSON.stringify(env.POISON_CONFLICT_THRESHOLD)}); refusing contributions`,
+    );
+    return new Response("internal server error", { status: 500 });
+  }
+
   let body: unknown;
   try {
     body = await request.json();
@@ -70,8 +89,9 @@ export async function handleContribute(request: Request, env: Env): Promise<Resp
   // Two-stage anti-poison: screen + exact confirm.
   // exactOverlap is exact-membership only (issue #3), so this threshold governs
   // verbatim hash overlap; independently re-decoded content may fall below it.
-  const threshold = parseFloat(env.POISON_CONFLICT_THRESHOLD);
-  const screenThreshold = threshold - 0.1;
+  // `threshold` is parsed and validated to [SCREEN_MARGIN, 1) at the top of this function,
+  // so screenThreshold is always >= 0.
+  const screenThreshold = threshold - SCREEN_MARGIN;
   let poisonCheck: "pass" | "flag_conflict" = "pass";
   let exactPct = screen.maxOverlapEstimate;
 
@@ -127,7 +147,9 @@ export async function handleContribute(request: Request, env: Env): Promise<Resp
 export interface Env {
   DB: D1Database;
   PACKS: R2Bucket;
-  POISON_CONFLICT_THRESHOLD: string;
+  // Optional: Workers deliver `undefined` for an absent [vars] binding at runtime, so the
+  // type must allow it — handleContribute validates it up front and 500s if it's missing.
+  POISON_CONFLICT_THRESHOLD?: string;
   IDENTIFY_MIN_SCORE?: string;
   ALLOW_DEV_SEED?: string;
   // Optional per-pseudonym rate limiter (Cloudflare Workers Rate-Limiting
