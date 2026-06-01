@@ -3,6 +3,7 @@ import { decompress } from "@bokuweb/zstd-wasm";
 import { beforeAll, describe, expect, it } from "vitest";
 import { encodeZstdVarint, initCodec } from "../src/codec";
 import { runPackBuilder } from "../src/workers/pack_builder";
+import { runPromotion } from "../src/workers/promotion";
 
 beforeAll(async () => {
   await initCodec();
@@ -26,6 +27,51 @@ describe("PackBuilderWorker", () => {
     expect(obj).not.toBeNull();
     const bytes = new Uint8Array(await obj!.arrayBuffer());
     expect(bytes.byteLength).toBeGreaterThan(0);
+  });
+
+  it("computes canonical_sketch for promoted episodes (all tiers)", async () => {
+    // Seed a candidate-tier episode (pack_builder won't build an R2 pack for it,
+    // but the sketch builder should still compute the minhash sketch).
+    const blob = await encodeZstdVarint([100, 200, 300]);
+    await env.DB.prepare(
+      `INSERT INTO episode_canonical (tmdb_id, season, episode, tier, fingerprint, unique_contributors, mean_confidence, promoted_at)
+       VALUES (?, ?, ?, 'candidate', ?, 1, 0.8, unixepoch())`,
+    )
+      .bind(77700, 1, 1, blob)
+      .run();
+
+    await runPackBuilder(env);
+
+    const sketch = await env.DB.prepare(
+      `SELECT hash_count FROM canonical_sketch WHERE tmdb_id = 77700 AND season = 1 AND episode = 1`,
+    ).first<{ hash_count: number }>();
+    expect(sketch).not.toBeNull();
+    expect(sketch?.hash_count).toBe(3);
+  });
+
+  it("refreshes a stale sketch when canonical fingerprint is re-promoted", async () => {
+    // Insert episode with an old sketch timestamp
+    const blob = await encodeZstdVarint([1, 2, 3, 4, 5]);
+    await env.DB.prepare(
+      `INSERT INTO episode_canonical (tmdb_id, season, episode, tier, fingerprint, unique_contributors, mean_confidence, promoted_at)
+       VALUES (?, ?, ?, 'candidate', ?, 1, 0.8, unixepoch())`,
+    )
+      .bind(77701, 1, 1, blob)
+      .run();
+    // Insert a sketch with a timestamp BEFORE promoted_at to simulate staleness
+    await env.DB.prepare(
+      `INSERT INTO canonical_sketch (tmdb_id, season, episode, sketch, hash_count, generated_at)
+       VALUES (?, ?, ?, ?, ?, 1)`,
+    )
+      .bind(77701, 1, 1, new Uint8Array(128 * 4), 999)
+      .run();
+
+    await runPackBuilder(env);
+
+    const sketch = await env.DB.prepare(
+      `SELECT hash_count FROM canonical_sketch WHERE tmdb_id = 77701 AND season = 1 AND episode = 1`,
+    ).first<{ hash_count: number }>();
+    expect(sketch?.hash_count).toBe(5); // updated to match the current fingerprint
   });
 
   it("does not write packs for shows with only CANDIDATE/CONFIRMED episodes", async () => {

@@ -1,13 +1,59 @@
 import { decodeZstdVarint, initCodec } from "../codec";
+import { minhash128 } from "../minhash";
 import type { Env } from "../routes/contribute";
 
 export async function runPackBuilder(env: Env): Promise<void> {
+  // Compute minhash sketches for any episode_canonical rows that don't yet have
+  // one or whose canonical fingerprint was updated since the sketch was built.
+  // This runs before pack building so identify has fresh sketches.
+  await runSketchBuilder(env);
+
   const shows = await env.DB.prepare(
     `SELECT DISTINCT tmdb_id FROM episode_canonical WHERE tier = 'canonical'`,
   ).all<{ tmdb_id: number }>();
 
   for (const s of shows.results) {
     await buildPack(env, s.tmdb_id);
+  }
+}
+
+async function runSketchBuilder(env: Env): Promise<void> {
+  // Find episodes missing a sketch or whose canonical was re-promoted after the last sketch.
+  // LIMIT 100 keeps memory bounded (all fingerprint BLOBs load into .results at once) and
+  // stays inside the cron's ~63-sketch CPU ceiling; subsequent 4 AM runs drain the rest.
+  // initCodec() is not called explicitly — decodeZstdVarint() calls it internally.
+  const episodes = await env.DB.prepare(
+    `SELECT ec.tmdb_id, ec.season, ec.episode, ec.fingerprint
+     FROM episode_canonical ec
+     LEFT JOIN canonical_sketch cs
+       ON ec.tmdb_id = cs.tmdb_id AND ec.season IS cs.season AND ec.episode IS cs.episode
+     WHERE cs.tmdb_id IS NULL OR cs.generated_at < ec.promoted_at
+     LIMIT 100`,
+  ).all<{
+    tmdb_id: number;
+    season: number | null;
+    episode: number | null;
+    fingerprint: ArrayBuffer;
+  }>();
+
+  for (const ep of episodes.results) {
+    try {
+      const hashes = await decodeZstdVarint(new Uint8Array(ep.fingerprint));
+      const sketch = minhash128(hashes);
+      await env.DB.prepare(
+        `INSERT INTO canonical_sketch (tmdb_id, season, episode, sketch, hash_count, generated_at)
+         VALUES (?, ?, ?, ?, ?, unixepoch())
+         ON CONFLICT (tmdb_id, season, episode) DO UPDATE SET
+           sketch = excluded.sketch, hash_count = excluded.hash_count, generated_at = excluded.generated_at`,
+      )
+        .bind(ep.tmdb_id, ep.season, ep.episode, sketch, hashes.length)
+        .run();
+    } catch (err) {
+      console.error(
+        `[sketch-builder] failed tmdb_id=${ep.tmdb_id} s=${ep.season} e=${ep.episode}:`,
+        err,
+      );
+    }
   }
 }
 

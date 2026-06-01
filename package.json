@@ -22,7 +22,7 @@
     "check:fix": "biome check --write .",
     "migrate:local": "wrangler d1 migrations apply engram-fingerprint --local",
     "migrate:remote": "wrangler d1 migrations apply engram-fingerprint --remote",
-    "dashboard": "node scripts/dashboard-server.mjs",
+    "dashboard": "node --env-file-if-exists=.env scripts/dashboard-server.mjs",
     "prepare": "lefthook install"
   },
   "devDependencies": {
