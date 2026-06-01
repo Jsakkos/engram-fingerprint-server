@@ -100,12 +100,23 @@ describe("PromotionWorker", () => {
     expect(canonical?.tier).toBe("canonical");
     expect(canonical?.mean_confidence).toBeGreaterThanOrEqual(0.85);
     expect(canonical?.unique_contributors).toBe(3);
+  });
 
-    // Sketch should exist
-    const sketch = await env.DB.prepare(
-      `SELECT * FROM canonical_sketch WHERE tmdb_id = 33333 AND season = 1 AND episode = 1`,
-    ).first();
-    expect(sketch).not.toBeNull();
+  it("skips episodes where all pass contributions are below confidence threshold", async () => {
+    await seedContribution({
+      pseudonym: "aa555555-5555-4555-8555-555555555555",
+      tmdb_id: 55555,
+      season: 1,
+      episode: 1,
+      hashes: [1, 2, 3],
+      confidence: 0.5, // below the 0.70 promotion threshold
+    });
+    await runPromotion(env);
+    const canonical = await env.DB.prepare(
+      `SELECT tier FROM episode_canonical WHERE tmdb_id = 55555`,
+    ).first<{ tier: string }>();
+    // Not promoted — confidence too low — and the loop must not have thrown
+    expect(canonical).toBeNull();
   });
 
   it("marks promoted contributions with promoted_at", async () => {

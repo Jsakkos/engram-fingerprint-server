@@ -1,16 +1,22 @@
 import { decodeZstdVarint, encodeZstdVarint } from "../codec";
-import { minhash128 } from "../minhash";
 import type { Env } from "../routes/contribute";
 
 export async function runPromotion(env: Env): Promise<void> {
   // 1. Find all distinct (tmdb_id, season, episode) with unpromoted contributions
   const groups = await env.DB.prepare(
     `SELECT DISTINCT tmdb_id, season, episode FROM contribution
-     WHERE promoted_at IS NULL AND poison_check = 'pass'`,
+     WHERE promoted_at IS NULL AND poison_check = 'pass' AND match_confidence >= 0.70`,
   ).all<{ tmdb_id: number; season: number | null; episode: number | null }>();
 
   for (const g of groups.results) {
-    await promoteOne(env, g.tmdb_id, g.season, g.episode);
+    try {
+      await promoteOne(env, g.tmdb_id, g.season, g.episode);
+    } catch (err) {
+      console.error(
+        `[promotion] promoteOne failed tmdb_id=${g.tmdb_id} s=${g.season} e=${g.episode}:`,
+        err,
+      );
+    }
   }
 }
 
@@ -109,17 +115,6 @@ async function promoteOne(
        promoted_at = excluded.promoted_at`,
   )
     .bind(tmdb_id, season, episode, tier, consensusBlob, independentCount, meanConfidence)
-    .run();
-
-  // Upsert sketch (only on tier change OR new row — for simplicity, always upsert)
-  const sketch = minhash128(consensusHashes);
-  await env.DB.prepare(
-    `INSERT INTO canonical_sketch (tmdb_id, season, episode, sketch, hash_count, generated_at)
-     VALUES (?, ?, ?, ?, ?, unixepoch())
-     ON CONFLICT (tmdb_id, season, episode) DO UPDATE SET
-       sketch = excluded.sketch, hash_count = excluded.hash_count, generated_at = excluded.generated_at`,
-  )
-    .bind(tmdb_id, season, episode, sketch, consensusHashes.length)
     .run();
 
   // Mark contributions promoted
