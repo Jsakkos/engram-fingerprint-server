@@ -94,7 +94,16 @@ describe("minhash", () => {
       minhash128(hashes);
     });
     const slow = fastestMs(() => slowMinhash128(hashes));
-    // Real speedup is ~10x; require a conservative 3x so CI timing noise can't flake it.
-    expect(fast).toBeLessThan(slow / 3);
+    // The real speedup is ~10-15x. We assert only a conservative 2x because the
+    // fast path's true cost (sub-millisecond) is BELOW workerd's ~1ms timer
+    // resolution, so `fast` is effectively quantized noise (observed: 1-4ms): a
+    // single scheduler hiccup on a loaded CI vCPU rounds the short op up several
+    // ms and collapses the *measured* ratio far below the real one. A 3x gate sat
+    // inside that noise band and flaked at the exact boundary (fast=17, slow=51 ->
+    // slow/3==17, and 17<17 is false). 2x stays comfortably under the genuine
+    // 10-15x speedup yet still fails loudly if the old `(a*x+b) mod prime` family
+    // (~1x, no speedup) ever returns. Magnitude can't help here — slow is ~15x
+    // fast, so making `fast` clear the 1ms floor would push `slow` into seconds.
+    expect(fast).toBeLessThan(slow / 2);
   });
 });
