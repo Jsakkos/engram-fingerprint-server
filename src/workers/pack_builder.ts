@@ -3,11 +3,10 @@ import { minhash128 } from "../minhash";
 import type { Env } from "../routes/contribute";
 
 export async function runPackBuilder(env: Env): Promise<void> {
-  // Compute minhash sketches for any episode_canonical rows that don't yet have
-  // one or whose canonical fingerprint was updated since the sketch was built.
-  // This runs before pack building so identify has fresh sketches.
-  await runSketchBuilder(env);
-
+  // Pack building only — sketch computation is decoupled into its own hourly cron
+  // (runSketchBuilder), so the expensive minhash sweep no longer piggybacks on this
+  // daily job. buildPack reads episode_canonical.fingerprint directly, never
+  // canonical_sketch, so the two are genuinely independent.
   const shows = await env.DB.prepare(
     `SELECT DISTINCT tmdb_id FROM episode_canonical WHERE tier = 'canonical'`,
   ).all<{ tmdb_id: number }>();
@@ -18,11 +17,14 @@ export async function runPackBuilder(env: Env): Promise<void> {
 }
 
 /**
- * Compute minhash sketches for episodes that are missing one or have a stale sketch
- * (sketch older than the episode's last promotion). Processes canonical tier first
- * to prioritise identify quality for the most trusted episodes.
- * TODO: LIMIT 100 means the backlog grows if intake exceeds 100 new episodes/day;
- *       migrate to Cloudflare Queues to give each sketch its own CPU budget.
+ * Compute minhash sketches for episodes missing one or with a stale sketch (sketch
+ * older-or-equal to the episode's last promotion). Processes canonical tier first to
+ * prioritise identify quality for the most trusted episodes.
+ *
+ * Invoked by its own hourly cron ("0 * * * *"). minhash128 is ~475ms CPU/episode, so
+ * each run clears ~63 within the 30s budget; 24 runs/day ≈ 1,512 sketches/day, which
+ * stays ahead of intake without raising the per-invocation CPU ceiling. If intake ever
+ * outpaces that, migrate to Cloudflare Queues to give each sketch its own CPU budget.
  */
 export async function runSketchBuilder(env: Env): Promise<void> {
   // initCodec() is not called explicitly — decodeZstdVarint() calls it internally.
