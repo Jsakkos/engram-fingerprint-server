@@ -18,15 +18,17 @@ export async function runPackBuilder(env: Env): Promise<void> {
 }
 
 async function runSketchBuilder(env: Env): Promise<void> {
-  await initCodec();
-
   // Find episodes missing a sketch or whose canonical was re-promoted after the last sketch.
+  // LIMIT 100 keeps memory bounded (all fingerprint BLOBs load into .results at once) and
+  // stays inside the cron's ~63-sketch CPU ceiling; subsequent 4 AM runs drain the rest.
+  // initCodec() is not called explicitly — decodeZstdVarint() calls it internally.
   const episodes = await env.DB.prepare(
     `SELECT ec.tmdb_id, ec.season, ec.episode, ec.fingerprint
      FROM episode_canonical ec
      LEFT JOIN canonical_sketch cs
        ON ec.tmdb_id = cs.tmdb_id AND ec.season IS cs.season AND ec.episode IS cs.episode
-     WHERE cs.tmdb_id IS NULL OR cs.generated_at < ec.promoted_at`,
+     WHERE cs.tmdb_id IS NULL OR cs.generated_at < ec.promoted_at
+     LIMIT 100`,
   ).all<{
     tmdb_id: number;
     season: number | null;

@@ -10,8 +10,8 @@ SELECT COUNT(*) AS n FROM contribution;
 -- [1] contributions by anti-poison verdict (unpromoted only — shows what's blocking the queue)
 SELECT poison_check, COUNT(*) AS n FROM contribution WHERE promoted_at IS NULL GROUP BY poison_check;
 
--- [2] contributions eligible for the nightly promotion cron (pass check, not yet promoted)
-SELECT COUNT(*) AS n FROM contribution WHERE promoted_at IS NULL AND poison_check = 'pass';
+-- [2] contributions eligible for the nightly promotion cron (pass check + confidence threshold)
+SELECT COUNT(*) AS n FROM contribution WHERE promoted_at IS NULL AND poison_check = 'pass' AND match_confidence >= 0.70;
 
 -- [3] episodes by promotion tier
 SELECT tier, COUNT(*) AS n FROM episode_canonical GROUP BY tier;
