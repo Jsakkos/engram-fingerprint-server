@@ -46,32 +46,29 @@ FROM contribution
 GROUP BY day
 ORDER BY day;
 
--- [11] canonical/promoted episodes per day (catalog growth)
-SELECT date(promoted_at, 'unixepoch') AS day, COUNT(*) AS n
+-- [11] tracked episodes per day by tier (catalog growth over time)
+-- promoted_at is the LATEST promotion time and `tier` is the CURRENT tier, so each
+-- series reads as "episodes currently at tier X, bucketed by last-promotion day";
+-- the cumulative totals converge to the live per-tier counts in [3].
+SELECT date(promoted_at, 'unixepoch') AS day, tier, COUNT(*) AS n
 FROM episode_canonical
-GROUP BY day
+GROUP BY day, tier
 ORDER BY day;
 
--- [12] new contributors per day
-SELECT date(first_seen, 'unixepoch') AS day, COUNT(*) AS n
-FROM contributor
-GROUP BY day
-ORDER BY day;
-
--- [13] contributions by match source
+-- [12] contributions by match source
 SELECT match_source, COUNT(*) AS n
 FROM contribution
 GROUP BY match_source
 ORDER BY n DESC;
 
--- [14] anti-poison overlap observations
+-- [13] anti-poison overlap observations
 SELECT
   COUNT(*) AS n,
   AVG(max_overlap_pct) AS avg_overlap,
   MAX(max_overlap_pct) AS max_overlap
 FROM overlap_observation;
 
--- [15] top shows by tracked-episode count
+-- [14] top shows by tracked-episode count
 SELECT
   tmdb_id,
   COUNT(*) AS episodes,
@@ -84,13 +81,13 @@ GROUP BY tmdb_id
 ORDER BY episodes DESC, canonical DESC
 LIMIT 20;
 
--- [16] top contributors by submission count
+-- [15] top contributors by submission count
 SELECT pseudonym, contribution_count, flagged, flag_count, first_seen, last_seen
 FROM contributor
 ORDER BY contribution_count DESC
 LIMIT 20;
 
--- [17] most recent contributions (live activity feed)
+-- [16] most recent contributions (live activity feed)
 SELECT
   id,
   received_at,

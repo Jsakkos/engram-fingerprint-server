@@ -20,6 +20,9 @@ import {
   isSummaryResponse,
   parseWranglerJson,
   shapePayload,
+  shapeShow,
+  shapeShowsList,
+  shapeTier,
 } from "../dashboard/transform.mjs";
 
 const REPO_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -51,7 +54,35 @@ const MIME = {
   ".sql": "text/plain; charset=utf-8",
 };
 
-const cache = new Map(); // source -> { payload, ts }
+const cache = new Map(); // cacheKey -> { payload, ts }
+
+// --- request param parsing / validation ---
+// The parameterized endpoints interpolate values straight into the SQL --command,
+// so every caller-supplied value is validated to a safe shape first: tmdb_id to a
+// positive integer, tier to an allowlisted literal, limit/offset to bounded ints.
+const TIERS = new Set(["candidate", "confirmed", "canonical"]);
+const getSource = (url) => (url.searchParams.get("source") === "remote" ? "remote" : "local");
+const isFresh = (url) => url.searchParams.get("fresh") === "1";
+const parseTmdbId = (raw) =>
+  /^\d+$/.test(String(raw ?? "")) && Number(raw) > 0 ? Number(raw) : null;
+const parseTier = (raw) => (TIERS.has(raw) ? raw : null);
+function clampInt(raw, dflt, min, max) {
+  const n = Number.parseInt(raw ?? "", 10);
+  if (!Number.isFinite(n)) return dflt;
+  return Math.min(max, Math.max(min, n));
+}
+
+// Serve a still-warm cached payload (per cacheKey) unless ?fresh=1. Returns true
+// when it answered the request. Keys are namespaced per endpoint+source so LOCAL
+// and PROD never share an entry.
+function cachedHit(key, res, fresh) {
+  const hit = cache.get(key);
+  if (!fresh && hit && Date.now() - hit.ts < CACHE_TTL_MS) {
+    sendJson(res, 200, { ...hit.payload, cached: true });
+    return true;
+  }
+  return false;
+}
 
 function resolveWranglerEntry() {
   // Run wrangler's JS entry directly with the current node binary. This sidesteps
@@ -70,19 +101,15 @@ function resolveWranglerEntry() {
   }
 }
 
-async function runWrangler(source) {
+// Run an arbitrary read-only SQL string against the selected D1 and return the
+// parsed positional result sets. Shared by every endpoint; callers shape the sets.
+function runSql(source, sql) {
   const entry = resolveWranglerEntry();
   if (!entry) {
-    return {
+    return Promise.resolve({
       ok: false,
       error: "wrangler is not installed. Run `pnpm install` in the repo root first.",
-    };
-  }
-  let sql;
-  try {
-    sql = await readFile(QUERIES_FILE, "utf8");
-  } catch (err) {
-    return { ok: false, error: `Could not read ${QUERIES_FILE}: ${err.message}` };
+    });
   }
   return new Promise((res) => {
     const flag = source === "remote" ? "--remote" : "--local";
@@ -90,8 +117,8 @@ async function runWrangler(source) {
     // multi-statement `--file` returns only an execution summary (Total queries
     // executed / Rows read) instead of the per-statement result sets, which makes
     // every metric read as 0. The same statements via `--command` return real
-    // result sets on both local and remote. The `=` form is required so the SQL —
-    // which begins with a `-- comment` line — isn't mis-parsed as a CLI flag.
+    // result sets on both local and remote. The `=` form is required so SQL that
+    // begins with a `-- comment` line isn't mis-parsed as a CLI flag.
     const args = [entry, "d1", "execute", DB_NAME, flag, "--json", `--command=${sql}`];
     const child = spawn(process.execPath, args, { cwd: REPO_ROOT });
 
@@ -124,8 +151,6 @@ async function runWrangler(source) {
       finish({ ok: false, error: `Failed to launch wrangler: ${err.message}` });
     });
     child.on("close", (code) => {
-      // wrangler has exited; its watchdog no longer applies. Name resolution
-      // below has its own per-request timeout budget.
       clearTimeout(timer);
       if (code !== 0) {
         finish({ ok: false, error: explainWranglerFailure(stderr || stdout, source, code) });
@@ -136,28 +161,36 @@ async function runWrangler(source) {
         finish({ ok: false, error: "Could not parse wrangler JSON output." });
         return;
       }
-      if (isSummaryResponse(sets)) {
-        // Defends against a regression to `--file` (or a wrangler/D1 change) that
-        // makes remote return an execution summary instead of result sets — fail
-        // loudly rather than render a dashboard of silent zeros.
-        finish({
-          ok: false,
-          error: `wrangler returned an execution summary instead of result sets on ${source} — the queries must be sent via \`--command\`, not \`--file\`.`,
-        });
-        return;
-      }
-      const data = shapePayload(sets);
-      resolveNames(distinctShowIds(data))
-        .then((names) => {
-          data.names = names;
-          finish({ ok: true, data });
-        })
-        .catch(() => {
-          data.names = {};
-          finish({ ok: true, data });
-        });
+      finish({ ok: true, sets });
     });
   });
+}
+
+// /api/stats: the full queries.sql file -> the shaped dashboard payload (with TMDB
+// names resolved). Thin wrapper over runSql; keeps the summary-response guard.
+async function runWrangler(source) {
+  let sql;
+  try {
+    sql = await readFile(QUERIES_FILE, "utf8");
+  } catch (err) {
+    return { ok: false, error: `Could not read ${QUERIES_FILE}: ${err.message}` };
+  }
+  const result = await runSql(source, sql);
+  if (!result.ok) return result;
+  if (isSummaryResponse(result.sets)) {
+    // Defends against a regression to `--file` (or a wrangler/D1 change) that makes
+    // remote return an execution summary instead of result sets — fail loudly
+    // rather than render a dashboard of silent zeros.
+    return {
+      ok: false,
+      error: `wrangler returned an execution summary instead of result sets on ${source} — the queries must be sent via \`--command\`, not \`--file\`.`,
+    };
+  }
+  const data = shapePayload(result.sets);
+  // resolveNames is best-effort and never throws, but guard anyway so a name-layer
+  // surprise can't turn a good stats payload into a 500.
+  data.names = await resolveNames(distinctShowIds(data)).catch(() => ({}));
+  return { ok: true, data };
 }
 
 function explainWranglerFailure(message, source, code) {
@@ -282,14 +315,9 @@ async function resolveNames(ids) {
 // ---- http -------------------------------------------------------------------
 
 async function handleStats(url, res) {
-  const source = url.searchParams.get("source") === "remote" ? "remote" : "local";
-  const fresh = url.searchParams.get("fresh") === "1";
-
-  const cached = cache.get(source);
-  if (!fresh && cached && Date.now() - cached.ts < CACHE_TTL_MS) {
-    sendJson(res, 200, { ...cached.payload, cached: true });
-    return;
-  }
+  const source = getSource(url);
+  const key = `stats:${source}`;
+  if (cachedHit(key, res, isFresh(url))) return;
 
   const result = await runWrangler(source);
   const payload = {
@@ -299,7 +327,136 @@ async function handleStats(url, res) {
     cached: false,
     ...(result.ok ? { data: result.data } : { error: result.error }),
   };
-  if (result.ok) cache.set(source, { payload, ts: Date.now() });
+  if (result.ok) cache.set(key, { payload, ts: Date.now() });
+  sendJson(res, 200, payload);
+}
+
+// GET /api/shows — every show with per-tier episode counts (browser picker). The
+// hero TOP SHOWS panel keeps its LIMIT 20; this is the full, unbounded list.
+async function handleShows(url, res) {
+  const source = getSource(url);
+  const key = `shows:${source}`;
+  if (cachedHit(key, res, isFresh(url))) return;
+
+  const sql = `SELECT tmdb_id, COUNT(*) AS episodes,
+      SUM(CASE WHEN tier = 'canonical' THEN 1 ELSE 0 END) AS canonical,
+      SUM(CASE WHEN tier = 'confirmed' THEN 1 ELSE 0 END) AS confirmed,
+      SUM(CASE WHEN tier = 'candidate' THEN 1 ELSE 0 END) AS candidate,
+      AVG(mean_confidence) AS avg_conf
+    FROM episode_canonical GROUP BY tmdb_id ORDER BY episodes DESC, canonical DESC;`;
+  const result = await runSql(source, sql);
+  if (!result.ok) {
+    sendJson(res, 200, {
+      ok: false,
+      source,
+      generatedAt: Date.now(),
+      cached: false,
+      error: result.error,
+    });
+    return;
+  }
+  const data = shapeShowsList(result.sets);
+  data.names = await resolveNames(data.shows.map((s) => s.tmdb_id)).catch(() => ({}));
+  const payload = { ok: true, source, generatedAt: Date.now(), cached: false, data };
+  cache.set(key, { payload, ts: Date.now() });
+  sendJson(res, 200, payload);
+}
+
+// GET /api/show?tmdb_id= — one show's episodes + per-tier summary, for the
+// completeness grid and detail table.
+async function handleShow(url, res) {
+  const source = getSource(url);
+  const tmdbId = parseTmdbId(url.searchParams.get("tmdb_id"));
+  if (tmdbId === null) {
+    sendJson(res, 400, { ok: false, error: "tmdb_id must be a positive integer." });
+    return;
+  }
+  const key = `show:${source}:${tmdbId}`;
+  if (cachedHit(key, res, isFresh(url))) return;
+
+  // tmdbId is a validated integer, interpolated directly. Per-episode contribution
+  // counts come from one grouped subquery (not a correlated per-row count).
+  const sql = `SELECT ec.season, ec.episode, ec.tier, ec.mean_confidence, ec.unique_contributors,
+      ec.promoted_at, cs.hash_count AS hash_count, COALESCE(cc.n, 0) AS contributions
+    FROM episode_canonical ec
+    LEFT JOIN canonical_sketch cs
+      ON cs.tmdb_id = ec.tmdb_id AND cs.season = ec.season AND cs.episode = ec.episode
+    LEFT JOIN (SELECT season, episode, COUNT(*) AS n FROM contribution WHERE tmdb_id = ${tmdbId} GROUP BY season, episode) cc
+      ON cc.season = ec.season AND cc.episode = ec.episode
+    WHERE ec.tmdb_id = ${tmdbId} ORDER BY ec.season, ec.episode;
+    SELECT tier, COUNT(*) AS n, AVG(mean_confidence) AS avg_conf
+    FROM episode_canonical WHERE tmdb_id = ${tmdbId} GROUP BY tier;`;
+  const result = await runSql(source, sql);
+  if (!result.ok) {
+    sendJson(res, 200, {
+      ok: false,
+      source,
+      tmdb_id: tmdbId,
+      generatedAt: Date.now(),
+      cached: false,
+      error: result.error,
+    });
+    return;
+  }
+  const data = shapeShow(result.sets);
+  data.tmdb_id = tmdbId;
+  data.names = await resolveNames([tmdbId]).catch(() => ({}));
+  const payload = {
+    ok: true,
+    source,
+    tmdb_id: tmdbId,
+    generatedAt: Date.now(),
+    cached: false,
+    data,
+  };
+  cache.set(key, { payload, ts: Date.now() });
+  sendJson(res, 200, payload);
+}
+
+// GET /api/tier?tier=&limit=&offset= — episodes in one tier across all shows,
+// paged. Quality is read from unique_contributors / mean_confidence / hash_count.
+async function handleTier(url, res) {
+  const source = getSource(url);
+  const tier = parseTier(url.searchParams.get("tier"));
+  if (!tier) {
+    sendJson(res, 400, {
+      ok: false,
+      error: "tier must be one of candidate, confirmed, canonical.",
+    });
+    return;
+  }
+  const limit = clampInt(url.searchParams.get("limit"), 200, 1, 500);
+  const offset = clampInt(url.searchParams.get("offset"), 0, 0, Number.MAX_SAFE_INTEGER);
+  const key = `tier:${source}:${tier}:${limit}:${offset}`;
+  if (cachedHit(key, res, isFresh(url))) return;
+
+  // tier is allowlisted; limit/offset are clamped ints — safe to interpolate.
+  const sql = `SELECT ec.tmdb_id, ec.season, ec.episode, ec.mean_confidence, ec.unique_contributors,
+      ec.promoted_at, cs.hash_count
+    FROM episode_canonical ec
+    LEFT JOIN canonical_sketch cs
+      ON cs.tmdb_id = ec.tmdb_id AND cs.season = ec.season AND cs.episode = ec.episode
+    WHERE ec.tier = '${tier}' ORDER BY ec.tmdb_id, ec.season, ec.episode
+    LIMIT ${limit} OFFSET ${offset};`;
+  const result = await runSql(source, sql);
+  if (!result.ok) {
+    sendJson(res, 200, {
+      ok: false,
+      source,
+      tier,
+      generatedAt: Date.now(),
+      cached: false,
+      error: result.error,
+    });
+    return;
+  }
+  const data = shapeTier(result.sets, limit);
+  data.tier = tier;
+  data.names = await resolveNames([...new Set(data.episodes.map((e) => e.tmdb_id))]).catch(
+    () => ({}),
+  );
+  const payload = { ok: true, source, tier, generatedAt: Date.now(), cached: false, data };
+  cache.set(key, { payload, ts: Date.now() });
   sendJson(res, 200, payload);
 }
 
@@ -328,10 +485,18 @@ function sendJson(res, status, obj) {
   res.end(body);
 }
 
+const API_ROUTES = {
+  "/api/stats": handleStats,
+  "/api/shows": handleShows,
+  "/api/show": handleShow,
+  "/api/tier": handleTier,
+};
+
 const server = createServer((req, res) => {
   const url = new URL(req.url, `http://${HOST}:${PORT}`);
-  if (url.pathname === "/api/stats") {
-    handleStats(url, res).catch((err) => sendJson(res, 500, { ok: false, error: String(err) }));
+  const route = API_ROUTES[url.pathname];
+  if (route) {
+    route(url, res).catch((err) => sendJson(res, 500, { ok: false, error: String(err) }));
     return;
   }
   serveStatic(url.pathname, res).catch(() => res.writeHead(500).end("Server error"));

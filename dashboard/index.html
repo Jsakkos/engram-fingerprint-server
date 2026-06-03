@@ -138,6 +138,21 @@
           </div>
           <div class="feed" id="feed"></div>
         </section>
+
+        <!-- catalog browser: drill into a show, or sweep a tier across shows -->
+        <section class="panel span-3" id="browserPanel">
+          <div class="panel-head">
+            <span class="panel-label">CATALOG BROWSER</span>
+            <div class="mode-toggle" id="browserMode" role="group" aria-label="Browser mode">
+              <button type="button" data-bmode="show" class="active">BY&nbsp;SHOW</button>
+              <button type="button" data-bmode="tier">BY&nbsp;TIER</button>
+            </div>
+          </div>
+          <div class="browser-controls" id="browserControls"></div>
+          <div class="browser-body" id="browserBody">
+            <div class="empty-state">pick a show, or switch to BY&nbsp;TIER…</div>
+          </div>
+        </section>
       </div>
     </main>
 
