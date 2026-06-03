@@ -547,9 +547,12 @@ function renderFeed(recent, names) {
 
 const TIER_LABELS = { canonical: "Canonical", confirmed: "Confirmed", candidate: "Candidate" };
 const TIER_ORDER = ["canonical", "confirmed", "candidate"];
+const TIER_PAGE = 200; // /api/tier page size — shared by the fetch and the offset math
 const pad2 = (n) => String(n).padStart(2, "0");
+// tier should always be a known key, but escape the fallback + class: an unexpected
+// DB value (schema drift, manual write) must not break out of the attribute or inject.
 const tierBadge = (tier) =>
-  `<span class="tier-badge t-${tier}">${TIER_LABELS[tier] || tier}</span>`;
+  `<span class="tier-badge t-${escapeHtml(tier)}">${TIER_LABELS[tier] || escapeHtml(tier)}</span>`;
 const getJson = (url) => fetch(url).then((r) => r.json());
 
 // Lazy-load the full show list for the current source (separate from /api/stats so
@@ -744,7 +747,7 @@ async function loadTier(tier, offset, append) {
   if (!append) $("browserBody").innerHTML = '<div class="skeleton">scanning tier…</div>';
   try {
     const payload = await getJson(
-      `/api/tier?source=${state.source}&tier=${tier}&limit=200&offset=${offset}&fresh=1`,
+      `/api/tier?source=${state.source}&tier=${tier}&limit=${TIER_PAGE}&offset=${offset}&fresh=1`,
     );
     if (!payload.ok) {
       showError(payload.error || "Could not load that tier.");
@@ -793,7 +796,7 @@ function renderTierView(d, append) {
       `</tr></thead><tbody>${tierRows(d.episodes, d.names)}</tbody></table></div>${moreBtn}`;
   }
   $("tierMore")?.addEventListener("click", () =>
-    loadTier(d.tier, state.browser.offset + 200, true),
+    loadTier(d.tier, state.browser.offset + d.episodes.length, true),
   );
 }
 

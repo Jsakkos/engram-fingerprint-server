@@ -376,6 +376,9 @@ async function handleShow(url, res) {
 
   // tmdbId is a validated integer, interpolated directly. Per-episode contribution
   // counts come from one grouped subquery (not a correlated per-row count).
+  // Re-assert the safety invariant at the injection point so the guard is local.
+  if (!Number.isInteger(tmdbId) || tmdbId <= 0)
+    throw new Error("invariant: tmdbId must be a positive integer");
   const sql = `SELECT ec.season, ec.episode, ec.tier, ec.mean_confidence, ec.unique_contributors,
       ec.promoted_at, cs.hash_count AS hash_count, COALESCE(cc.n, 0) AS contributions
     FROM episode_canonical ec
@@ -431,6 +434,10 @@ async function handleTier(url, res) {
   if (cachedHit(key, res, isFresh(url))) return;
 
   // tier is allowlisted; limit/offset are clamped ints — safe to interpolate.
+  // Re-assert the safety invariant at the injection point so the guard is local.
+  if (!TIERS.has(tier) || !Number.isInteger(limit) || !Number.isInteger(offset)) {
+    throw new Error("invariant: tier must be allowlisted and limit/offset integers");
+  }
   const sql = `SELECT ec.tmdb_id, ec.season, ec.episode, ec.mean_confidence, ec.unique_contributors,
       ec.promoted_at, cs.hash_count
     FROM episode_canonical ec
