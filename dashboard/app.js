@@ -2,7 +2,18 @@ import { escapeHtml } from "./escape.mjs";
 
 // engram signal lab — client renderer (vanilla, no deps)
 
-const COLORS = { green: "#7cffb2", cyan: "#5ad1ff", amber: "#ffc857" };
+const COLORS = {
+  green: "#7cffb2",
+  cyan: "#5ad1ff",
+  amber: "#ffc857",
+  grey: "#7e9a8a",
+  // semantic aliases — these match the tier color language used across the UI
+  // (cyan = raw intake, grey = candidate, amber = confirmed, green = canonical)
+  contributions: "#5ad1ff",
+  candidate: "#7e9a8a",
+  confirmed: "#ffc857",
+  canonical: "#7cffb2",
+};
 const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 const SOURCE_LABELS = {
@@ -13,6 +24,8 @@ const SOURCE_LABELS = {
   engram_chromaprint_corroboration: "Chromaprint",
 };
 
+const TIERS = ["candidate", "confirmed", "canonical"];
+
 const state = {
   source: localStorage.getItem("sl.source") === "remote" ? "remote" : "local",
   growthMode: localStorage.getItem("sl.growthMode") === "daily" ? "daily" : "cumulative",
@@ -20,6 +33,18 @@ const state = {
   lastData: null,
   lastUpdated: 0,
   timer: null,
+  // catalog browser: independent of the auto-refresh `load()` cycle so an open
+  // drill-in view is never clobbered by a background refresh.
+  browser: {
+    mode: localStorage.getItem("sl.browserMode") === "tier" ? "tier" : "show",
+    tier: TIERS.includes(localStorage.getItem("sl.browserTier"))
+      ? localStorage.getItem("sl.browserTier")
+      : "canonical",
+    tmdbId: null,
+    offset: 0,
+    shows: null, // full show list, lazy-loaded per source
+    names: {},
+  },
 };
 
 const $ = (id) => document.getElementById(id);
@@ -251,23 +276,30 @@ function alignSeries(map, days, cumulative) {
 function renderGrowth(ts, mode) {
   const host = $("growthChart");
   const cumulative = mode === "cumulative";
+  const bt = ts.byTier;
   const maps = {
-    canonicals: new Map(ts.canonicals.map((r) => [r.day, r.n])),
     contributions: new Map(ts.contributions.map((r) => [r.day, r.n])),
-    contributors: new Map(ts.contributors.map((r) => [r.day, r.n])),
+    candidate: new Map(bt.candidate.map((r) => [r.day, r.n])),
+    confirmed: new Map(bt.confirmed.map((r) => [r.day, r.n])),
+    canonical: new Map(bt.canonical.map((r) => [r.day, r.n])),
   };
   const days = [
     ...new Set([
-      ...maps.canonicals.keys(),
       ...maps.contributions.keys(),
-      ...maps.contributors.keys(),
+      ...maps.candidate.keys(),
+      ...maps.confirmed.keys(),
+      ...maps.canonical.keys(),
     ]),
   ].sort();
 
+  // Legend + series in promotion-pipeline order; every colour matches the tier
+  // language used elsewhere, so no swatch is ambiguous (amber = confirmed, not
+  // "new contributors" as before).
   $("growthLegend").innerHTML = [
-    ["green", "Canonical episodes"],
-    ["cyan", "Contributions"],
-    ["amber", "New contributors"],
+    ["contributions", "Contributions"],
+    ["candidate", "Candidate"],
+    ["confirmed", "Confirmed"],
+    ["canonical", "Canonical"],
   ]
     .map(
       ([c, label]) =>
@@ -282,9 +314,10 @@ function renderGrowth(ts, mode) {
   }
 
   const series = [
-    { key: "canonicals", color: COLORS.green, area: true },
-    { key: "contributions", color: COLORS.cyan },
-    { key: "contributors", color: COLORS.amber },
+    { key: "contributions", color: COLORS.contributions },
+    { key: "candidate", color: COLORS.candidate },
+    { key: "confirmed", color: COLORS.confirmed },
+    { key: "canonical", color: COLORS.canonical, area: true },
   ].map((s) => ({ ...s, values: alignSeries(maps[s.key], days, cumulative) }));
 
   const W = 1000;
@@ -434,7 +467,7 @@ function renderShows(shows, names) {
       const seg = (cls, v) =>
         v ? `<i class="mb-${cls}" style="width:${(v / total) * 100}%"></i>` : "";
       return (
-        "<tr>" +
+        `<tr class="row-click" data-tmdb="${s.tmdb_id}">` +
         showCell(s.tmdb_id, names) +
         `<td class="num">${fmtNum(s.episodes)}</td>` +
         `<td><span class="minibar">${seg("canonical", s.canonical)}${seg("confirmed", s.confirmed)}${seg("candidate", s.candidate)}</span></td>` +
@@ -510,6 +543,263 @@ function renderFeed(recent, names) {
     .join("");
 }
 
+// ---- catalog browser --------------------------------------------------------
+
+const TIER_LABELS = { canonical: "Canonical", confirmed: "Confirmed", candidate: "Candidate" };
+const TIER_ORDER = ["canonical", "confirmed", "candidate"];
+const TIER_PAGE = 200; // /api/tier page size — shared by the fetch and the offset math
+const pad2 = (n) => String(n).padStart(2, "0");
+// tier should always be a known key, but escape the fallback + class: an unexpected
+// DB value (schema drift, manual write) must not break out of the attribute or inject.
+const tierBadge = (tier) =>
+  `<span class="tier-badge t-${escapeHtml(tier)}">${TIER_LABELS[tier] || escapeHtml(tier)}</span>`;
+const getJson = (url) => fetch(url).then((r) => r.json());
+
+// Lazy-load the full show list for the current source (separate from /api/stats so
+// the hero TOP SHOWS table can stay at LIMIT 20). Re-renders the picker when done.
+async function loadShowsList() {
+  if (state.browser.shows) return;
+  try {
+    const payload = await getJson(`/api/shows?source=${state.source}`);
+    if (!payload.ok) {
+      showError(payload.error || "Could not load the show list.");
+      return;
+    }
+    state.browser.shows = payload.data.shows;
+    state.browser.names = { ...state.browser.names, ...(payload.data.names || {}) };
+  } catch (err) {
+    showError(`Could not reach the dashboard server: ${err.message}`);
+    return;
+  }
+  if (state.browser.mode === "show") renderBrowserControls();
+}
+
+function renderBrowserControls() {
+  const host = $("browserControls");
+  if (state.browser.mode === "show") {
+    const shows = state.browser.shows;
+    if (!shows) {
+      host.innerHTML = '<div class="skeleton">loading shows…</div>';
+      return;
+    }
+    const opts = shows
+      .map((s) => {
+        const name = state.browser.names?.[s.tmdb_id];
+        const label = name ? `${name} · ${s.episodes} ep` : `tmdb:${s.tmdb_id} · ${s.episodes} ep`;
+        const sel = s.tmdb_id === state.browser.tmdbId ? " selected" : "";
+        return `<option value="${s.tmdb_id}"${sel}>${escapeHtml(label)}</option>`;
+      })
+      .join("");
+    host.innerHTML =
+      '<label class="browser-pick"><span>SHOW</span>' +
+      `<select id="showPicker"><option value="">— choose a show —</option>${opts}</select></label>` +
+      `<span class="browser-hint">${fmtNum(shows.length)} shows · or click a TOP SHOWS row</span>`;
+    $("showPicker").addEventListener("change", (e) => {
+      const id = Number(e.target.value);
+      if (id) loadShow(id);
+    });
+  } else {
+    const buttons = TIER_ORDER.map(
+      (t) =>
+        `<button type="button" data-tier="${t}"${t === state.browser.tier ? ' class="active"' : ""}>${TIER_LABELS[t]}</button>`,
+    ).join("");
+    host.innerHTML = `<div class="mode-toggle tier-select" id="tierSelect" role="group" aria-label="Tier">${buttons}</div>`;
+    for (const b of $("tierSelect").children) {
+      b.addEventListener("click", () => {
+        state.browser.tier = b.dataset.tier;
+        localStorage.setItem("sl.browserTier", b.dataset.tier);
+        for (const x of $("tierSelect").children) x.classList.toggle("active", x === b);
+        loadTier(b.dataset.tier, 0, false);
+      });
+    }
+  }
+}
+
+function setBrowserMode(mode) {
+  state.browser.mode = mode;
+  localStorage.setItem("sl.browserMode", mode);
+  for (const b of $("browserMode").children) b.classList.toggle("active", b.dataset.bmode === mode);
+  renderBrowserControls();
+  if (mode === "show") {
+    loadShowsList();
+    if (state.browser.tmdbId) loadShow(state.browser.tmdbId);
+    else
+      $("browserBody").innerHTML =
+        '<div class="empty-state">pick a show to inspect its episodes…</div>';
+  } else {
+    loadTier(state.browser.tier, 0, false);
+  }
+}
+
+// Entry point from a TOP SHOWS row click: flip to show mode (without re-triggering
+// setBrowserMode's own load), scroll the panel in, then load the chosen show.
+function onShowRowClick(tmdbId) {
+  state.browser.mode = "show";
+  localStorage.setItem("sl.browserMode", "show");
+  for (const b of $("browserMode").children)
+    b.classList.toggle("active", b.dataset.bmode === "show");
+  renderBrowserControls();
+  loadShowsList();
+  $("browserPanel").scrollIntoView({ behavior: REDUCED ? "auto" : "smooth", block: "start" });
+  loadShow(tmdbId);
+}
+
+async function loadShow(tmdbId) {
+  state.browser.tmdbId = tmdbId;
+  const picker = $("showPicker");
+  if (picker) picker.value = String(tmdbId);
+  $("browserBody").innerHTML = '<div class="skeleton">scanning episodes…</div>';
+  try {
+    const payload = await getJson(`/api/show?source=${state.source}&tmdb_id=${tmdbId}&fresh=1`);
+    if (!payload.ok) {
+      showError(payload.error || "Could not load that show.");
+      return;
+    }
+    renderShowView(payload.data);
+  } catch (err) {
+    showError(`Could not reach the dashboard server: ${err.message}`);
+  }
+}
+
+function renderShowView(d) {
+  const name = d.names?.[d.tmdb_id];
+  const title = name
+    ? `<span class="bw-name">${escapeHtml(name)}</span> <span class="show-id">tmdb:${d.tmdb_id}</span>`
+    : `<span class="bw-name">tmdb:${d.tmdb_id}</span>`;
+  const chips = TIER_ORDER.map((t) => {
+    const conf = d.tierConf?.[t];
+    return (
+      `<span class="bw-chip t-${t}">${TIER_LABELS[t]}<b>${fmtNum(d.tierCounts[t] || 0)}</b>` +
+      `${conf ? `<i>conf ${conf.toFixed(2)}</i>` : ""}</span>`
+    );
+  }).join("");
+  const head = `<div class="bw-head">${title}<span class="bw-chips">${chips}</span></div>`;
+  if (!d.episodes.length) {
+    $("browserBody").innerHTML =
+      `${head}<div class="empty-state">no episodes tracked for this show yet</div>`;
+    return;
+  }
+  $("browserBody").innerHTML = head + renderEpisodeGrid(d) + renderEpisodeTable(d);
+}
+
+// Season×episode "phosphor matrix": every slot up to each season's highest episode
+// renders, so gaps below the max read as outlined (missing) cells at a glance.
+function renderEpisodeGrid(d) {
+  const byKey = new Map(d.episodes.map((e) => [`${e.season}:${e.episode}`, e]));
+  let i = 0;
+  const rows = d.seasons
+    .map((s) => {
+      let cells = "";
+      for (let ep = 1; ep <= s.maxEpisode; ep++) {
+        const e = byKey.get(`${s.season}:${ep}`);
+        const slot = `S${pad2(s.season)}E${pad2(ep)}`;
+        if (e) {
+          const delay = REDUCED ? 0 : Math.min(i++ * 6, 500);
+          const tip = `${slot} · ${TIER_LABELS[e.tier]} · conf ${e.mean_confidence.toFixed(2)} · ${e.unique_contributors} contrib`;
+          cells += `<i class="grid-cell t-${e.tier}" style="animation-delay:${delay}ms" title="${tip}"><span class="cell-num">${ep}</span></i>`;
+        } else {
+          cells += `<i class="grid-cell empty" title="${slot} · missing"><span class="cell-num">${ep}</span></i>`;
+        }
+      }
+      return `<div class="ep-grid-row"><span class="ep-grid-season">S${pad2(s.season)}</span><div class="ep-grid-cells">${cells}</div></div>`;
+    })
+    .join("");
+  const legend = [
+    ["canonical", "Canonical"],
+    ["confirmed", "Confirmed"],
+    ["candidate", "Candidate"],
+    ["empty", "Missing"],
+  ]
+    .map(
+      ([c, label]) =>
+        `<span class="lg"><span class="grid-swatch ${c === "empty" ? "empty" : `t-${c}`}"></span>${label}</span>`,
+    )
+    .join("");
+  return `<div class="ep-grid">${rows}</div><div class="legend grid-legend">${legend}</div>`;
+}
+
+function renderEpisodeTable(d) {
+  const rows = d.episodes
+    .map(
+      (e) =>
+        "<tr>" +
+        `<td class="mono-dim">${epLabel(e)}</td>` +
+        `<td>${tierBadge(e.tier)}</td>` +
+        `<td class="num">${e.mean_confidence ? e.mean_confidence.toFixed(2) : "—"}</td>` +
+        `<td class="num">${fmtNum(e.unique_contributors)}</td>` +
+        `<td class="num">${fmtNum(e.contributions)}</td>` +
+        `<td class="num mono-dim">${e.hash_count ? fmtNum(e.hash_count) : "—"}</td>` +
+        `<td class="mono-dim">${relTime(e.promoted_at)}</td>` +
+        "</tr>",
+    )
+    .join("");
+  return (
+    '<div class="table-wrap bw-table"><table><thead><tr>' +
+    '<th>S/E</th><th>Tier</th><th class="num">Conf</th><th class="num">Contrib</th>' +
+    '<th class="num">Subs</th><th class="num">Hashes</th><th>Age</th>' +
+    `</tr></thead><tbody>${rows}</tbody></table></div>`
+  );
+}
+
+async function loadTier(tier, offset, append) {
+  state.browser.tier = tier;
+  state.browser.offset = offset;
+  if (!append) $("browserBody").innerHTML = '<div class="skeleton">scanning tier…</div>';
+  try {
+    const payload = await getJson(
+      `/api/tier?source=${state.source}&tier=${tier}&limit=${TIER_PAGE}&offset=${offset}&fresh=1`,
+    );
+    if (!payload.ok) {
+      showError(payload.error || "Could not load that tier.");
+      return;
+    }
+    renderTierView(payload.data, append);
+  } catch (err) {
+    showError(`Could not reach the dashboard server: ${err.message}`);
+  }
+}
+
+function tierRows(episodes, names) {
+  return episodes
+    .map(
+      (e) =>
+        "<tr>" +
+        showCell(e.tmdb_id, names) +
+        `<td class="mono-dim">${epLabel(e)}</td>` +
+        `<td class="num">${e.mean_confidence ? e.mean_confidence.toFixed(2) : "—"}</td>` +
+        `<td class="num">${fmtNum(e.unique_contributors)}</td>` +
+        `<td class="num mono-dim">${e.hash_count ? fmtNum(e.hash_count) : "—"}</td>` +
+        `<td class="mono-dim">${relTime(e.promoted_at)}</td>` +
+        "</tr>",
+    )
+    .join("");
+}
+
+function renderTierView(d, append) {
+  const body = $("browserBody");
+  if (!d.episodes.length && !append) {
+    body.innerHTML = `<div class="empty-state">no ${TIER_LABELS[d.tier].toLowerCase()} episodes yet</div>`;
+    return;
+  }
+  const moreBtn = d.hasMore
+    ? '<button type="button" class="refresh-btn bw-more" id="tierMore">LOAD MORE</button>'
+    : "";
+  if (append) {
+    body.querySelector("tbody")?.insertAdjacentHTML("beforeend", tierRows(d.episodes, d.names));
+    $("tierMore")?.remove();
+    if (d.hasMore) body.insertAdjacentHTML("beforeend", moreBtn);
+  } else {
+    body.innerHTML =
+      '<div class="table-wrap bw-table"><table><thead><tr>' +
+      '<th>Show</th><th>S/E</th><th class="num">Conf</th><th class="num">Contrib</th>' +
+      '<th class="num">Hashes</th><th>Age</th>' +
+      `</tr></thead><tbody>${tierRows(d.episodes, d.names)}</tbody></table></div>${moreBtn}`;
+  }
+  $("tierMore")?.addEventListener("click", () =>
+    loadTier(d.tier, state.browser.offset + d.episodes.length, true),
+  );
+}
+
 // ---- controls + lifecycle ---------------------------------------------------
 
 function setSource(source) {
@@ -521,6 +811,19 @@ function setSource(source) {
   $("footerSource").textContent = source.toUpperCase();
   state.lastData = null;
   load(true);
+  // the browser is per-source — drop the cached show list and re-fetch the open view
+  state.browser.shows = null;
+  state.browser.names = {};
+  setBrowserMode(state.browser.mode);
+}
+
+// SCAN should also refresh whatever drill-in view is open (fresh=1 bypasses cache).
+function refreshBrowser() {
+  if (state.browser.mode === "show") {
+    if (state.browser.tmdbId) loadShow(state.browser.tmdbId);
+  } else {
+    loadTier(state.browser.tier, 0, false);
+  }
 }
 
 function setGrowthMode(mode) {
@@ -556,8 +859,20 @@ function init() {
     b.classList.toggle("active", b.dataset.mode === state.growthMode);
     b.addEventListener("click", () => setGrowthMode(b.dataset.mode));
   }
+  for (const b of $("browserMode").children) {
+    b.addEventListener("click", () => setBrowserMode(b.dataset.bmode));
+  }
+  // delegated so it survives renderShows re-painting the table on every refresh
+  $("showsTable").addEventListener("click", (e) => {
+    const tr = e.target.closest(".row-click");
+    if (tr?.dataset.tmdb) onShowRowClick(Number(tr.dataset.tmdb));
+  });
+
   $("footerSource").textContent = state.source.toUpperCase();
-  $("refreshBtn").addEventListener("click", () => load(true));
+  $("refreshBtn").addEventListener("click", () => {
+    load(true);
+    refreshBrowser();
+  });
   $("autoToggle").addEventListener("change", (e) => {
     state.auto = e.target.checked;
     startAuto();
@@ -572,6 +887,7 @@ function init() {
 
   load(true);
   startAuto();
+  setBrowserMode(state.browser.mode);
 }
 
 init();

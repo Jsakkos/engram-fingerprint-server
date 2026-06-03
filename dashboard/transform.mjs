@@ -19,13 +19,12 @@ export const QUERY_MAP = [
   "flaggedContributors", // [8]
   "confidenceByTier", // [9]
   "contributionsByDay", // [10]
-  "canonicalsByDay", // [11]
-  "contributorsByDay", // [12]
-  "matchSourceBreakdown", // [13]
-  "overlapStats", // [14]
-  "topShows", // [15]
-  "topContributors", // [16]
-  "recentContributions", // [17]
+  "episodesByTierByDay", // [11]
+  "matchSourceBreakdown", // [12]
+  "overlapStats", // [13]
+  "topShows", // [14]
+  "topContributors", // [15]
+  "recentContributions", // [16]
 ];
 
 export function parseWranglerJson(stdout) {
@@ -93,6 +92,31 @@ function toSeries(set) {
   return (set ?? []).filter((r) => r.day).map((r) => ({ day: r.day, n: num(r.n) }));
 }
 
+// Split a `date, tier, count` result set into one day-series per tier. Rows whose
+// tier isn't a known bucket (or that lack a day) are ignored. Each tier defaults to
+// an empty array so the chart can plot a flat line for a tier with no episodes yet.
+function toTierSeries(set) {
+  const out = { candidate: [], confirmed: [], canonical: [] };
+  for (const r of set ?? []) {
+    if (r.day && r.tier in out) out[r.tier].push({ day: r.day, n: num(r.n) });
+  }
+  return out;
+}
+
+// One catalog-show row -> the typed shape the UI consumes. Shared by shapePayload's
+// topShows (LIMIT 20 hero list) and shapeShowsList (full browser list) so the two
+// can't drift.
+function mapShowRow(r) {
+  return {
+    tmdb_id: num(r.tmdb_id),
+    episodes: num(r.episodes),
+    canonical: num(r.canonical),
+    confirmed: num(r.confirmed),
+    candidate: num(r.candidate),
+    avg_conf: num(r.avg_conf),
+  };
+}
+
 export function shapePayload(sets) {
   const get = (name) => sets[QUERY_MAP.indexOf(name)] ?? [];
 
@@ -132,17 +156,9 @@ export function shapePayload(sets) {
     })),
     timeseries: {
       contributions: toSeries(get("contributionsByDay")),
-      canonicals: toSeries(get("canonicalsByDay")),
-      contributors: toSeries(get("contributorsByDay")),
+      byTier: toTierSeries(get("episodesByTierByDay")),
     },
-    topShows: (get("topShows") ?? []).map((r) => ({
-      tmdb_id: num(r.tmdb_id),
-      episodes: num(r.episodes),
-      canonical: num(r.canonical),
-      confirmed: num(r.confirmed),
-      candidate: num(r.candidate),
-      avg_conf: num(r.avg_conf),
-    })),
+    topShows: (get("topShows") ?? []).map(mapShowRow),
     topContributors: (get("topContributors") ?? []).map((r) => ({
       // Only the 8-char prefix leaves the storage layer — the UI shows just the
       // prefix, and full pseudonyms must not land in the /api/stats JSON, DevTools,
@@ -165,6 +181,68 @@ export function shapePayload(sets) {
       poison_check: r.poison_check,
       promoted: r.promoted_at != null,
     })),
+  };
+}
+
+// ---- catalog browser shapers ------------------------------------------------
+// Each shapes the result sets from a single parameterized endpoint in
+// scripts/dashboard-server.mjs. Pure/IO-free so they live in the transform test
+// suite; the server attaches tmdb_id / resolved names afterwards.
+
+// /api/shows -> the full show list (one row per show). Reuses mapShowRow so the
+// browser picker and the hero topShows table stay structurally identical.
+export function shapeShowsList(sets) {
+  return { shows: (sets?.[0] ?? []).map(mapShowRow) };
+}
+
+// /api/show -> one show's episodes plus a per-tier summary.
+//   sets[0] = episode rows (season, episode, tier, mean_confidence,
+//             unique_contributors, contributions, hash_count, promoted_at)
+//   sets[1] = tier summary rows (tier, n, avg_conf)
+// `seasons` carries each season's highest episode number so the completeness grid
+// can render every slot up to the max — gaps below it show as missing cells.
+export function shapeShow(sets) {
+  const episodes = (sets?.[0] ?? []).map((r) => ({
+    season: num(r.season),
+    episode: num(r.episode),
+    tier: r.tier,
+    mean_confidence: num(r.mean_confidence),
+    unique_contributors: num(r.unique_contributors),
+    contributions: num(r.contributions),
+    hash_count: num(r.hash_count),
+    promoted_at: num(r.promoted_at),
+  }));
+  const tierCounts = { candidate: 0, confirmed: 0, canonical: 0 };
+  const tierConf = {};
+  for (const r of sets?.[1] ?? []) {
+    if (r.tier in tierCounts) tierCounts[r.tier] = num(r.n);
+    if (r.tier) tierConf[r.tier] = num(r.avg_conf);
+  }
+  const maxBySeason = new Map();
+  for (const e of episodes) {
+    if (e.episode > (maxBySeason.get(e.season) ?? 0)) maxBySeason.set(e.season, e.episode);
+  }
+  const seasons = [...maxBySeason.entries()]
+    .map(([season, maxEpisode]) => ({ season, maxEpisode }))
+    .sort((a, b) => a.season - b.season);
+  return { episodes, tierCounts, tierConf, seasons };
+}
+
+// /api/tier -> episodes in one tier across all shows (a single capped page).
+// `hasMore` is true when the page came back full, so the UI offers "load more".
+export function shapeTier(sets, limit) {
+  const rows = sets?.[0] ?? [];
+  return {
+    episodes: rows.map((r) => ({
+      tmdb_id: num(r.tmdb_id),
+      season: num(r.season),
+      episode: num(r.episode),
+      mean_confidence: num(r.mean_confidence),
+      unique_contributors: num(r.unique_contributors),
+      hash_count: num(r.hash_count),
+      promoted_at: num(r.promoted_at),
+    })),
+    hasMore: rows.length === limit,
   };
 }
 

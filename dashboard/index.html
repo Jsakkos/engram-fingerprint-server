@@ -84,6 +84,7 @@
           </div>
           <div class="chart-wrap" id="growthChart"></div>
           <div class="legend" id="growthLegend"></div>
+          <div class="chart-note">episodes by current tier · bucketed by last-promotion date</div>
         </section>
 
         <!-- tier ladder + confidence -->
@@ -137,6 +138,21 @@
             <span class="panel-sub">latest contributions</span>
           </div>
           <div class="feed" id="feed"></div>
+        </section>
+
+        <!-- catalog browser: drill into a show, or sweep a tier across shows -->
+        <section class="panel span-3" id="browserPanel">
+          <div class="panel-head">
+            <span class="panel-label">CATALOG BROWSER</span>
+            <div class="mode-toggle" id="browserMode" role="group" aria-label="Browser mode">
+              <button type="button" data-bmode="show" class="active">BY&nbsp;SHOW</button>
+              <button type="button" data-bmode="tier">BY&nbsp;TIER</button>
+            </div>
+          </div>
+          <div class="browser-controls" id="browserControls"></div>
+          <div class="browser-body" id="browserBody">
+            <div class="empty-state">pick a show, or switch to BY&nbsp;TIER…</div>
+          </div>
         </section>
       </div>
     </main>

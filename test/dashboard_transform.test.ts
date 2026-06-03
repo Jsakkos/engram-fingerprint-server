@@ -4,6 +4,9 @@ import {
   isSummaryResponse,
   parseWranglerJson,
   shapePayload,
+  shapeShow,
+  shapeShowsList,
+  shapeTier,
 } from "../dashboard/transform.mjs";
 
 // Wrap result-set rows the way `wrangler d1 execute --json` does: an array of
@@ -12,7 +15,7 @@ function wrangler(sets: unknown[][]): string {
   return JSON.stringify(sets.map((results) => ({ results, success: true, meta: {} })));
 }
 
-// A realistic 18-statement payload in dashboard/queries.sql order.
+// A realistic 17-statement payload in dashboard/queries.sql order.
 const SETS: unknown[][] = [
   [{ n: 201 }], // [0] totalContributions
   [
@@ -28,14 +31,13 @@ const SETS: unknown[][] = [
   [{ n: 0 }], // [8] flaggedContributors
   [{ tier: "candidate", avg_conf: 0.95, min_conf: 0.95, max_conf: 0.95 }], // [9]
   [{ day: "2026-05-30", n: 201 }], // [10] contributionsByDay
-  [], // [11] canonicalsByDay
-  [{ day: "2026-05-30", n: 2 }], // [12] contributorsByDay
+  [{ day: "2026-05-30", tier: "candidate", n: 1 }], // [11] episodesByTierByDay
   [
     { match_source: "bootstrap", n: 200 },
     { match_source: "engram_asr", n: 1 },
-  ], // [13]
-  [{ n: 201, avg_overlap: 0.12, max_overlap: 0.4 }], // [14] overlapStats
-  [{ tmdb_id: 1399, episodes: 1, canonical: 0, confirmed: 0, candidate: 1, avg_conf: 0.95 }], // [15]
+  ], // [12] matchSourceBreakdown
+  [{ n: 201, avg_overlap: 0.12, max_overlap: 0.4 }], // [13] overlapStats
+  [{ tmdb_id: 1399, episodes: 1, canonical: 0, confirmed: 0, candidate: 1, avg_conf: 0.95 }], // [14] topShows
   [
     {
       pseudonym: "9e0fad8d-aaaa",
@@ -45,7 +47,7 @@ const SETS: unknown[][] = [
       first_seen: 1,
       last_seen: 2,
     },
-  ], // [16] topContributors
+  ], // [15] topContributors
   [
     {
       id: 201,
@@ -58,11 +60,11 @@ const SETS: unknown[][] = [
       poison_check: "pass",
       promoted_at: null,
     },
-  ], // [17] recentContributions
+  ], // [16] recentContributions
 ];
 
 describe("dashboard transform", () => {
-  it("shapes a full 18-set wrangler payload into named totals", () => {
+  it("shapes a full 17-set wrangler payload into named totals", () => {
     const sets = parseWranglerJson(wrangler(SETS));
     expect(sets).not.toBeNull();
     expect(isSummaryResponse(sets)).toBe(false);
@@ -82,6 +84,14 @@ describe("dashboard transform", () => {
     expect(d.topShows[0].tmdb_id).toBe(1399);
     expect(d.recent).toHaveLength(1);
     expect(d.timeseries.contributions).toEqual([{ day: "2026-05-30", n: 201 }]);
+  });
+
+  it("splits the catalog-growth series by tier, defaulting empty tiers to []", () => {
+    const sets = parseWranglerJson(wrangler(SETS));
+    const d = shapePayload(sets as unknown[][]);
+    expect(d.timeseries.byTier.candidate).toEqual([{ day: "2026-05-30", n: 1 }]);
+    expect(d.timeseries.byTier.confirmed).toEqual([]);
+    expect(d.timeseries.byTier.canonical).toEqual([]);
   });
 
   it("tolerates leading notice lines before the JSON array", () => {
@@ -150,5 +160,125 @@ describe("distinctShowIds", () => {
   it("ignores falsy/zero ids", () => {
     const data = { topShows: [{ tmdb_id: 0 }, { tmdb_id: 42 }], recent: [{}] };
     expect(distinctShowIds(data)).toEqual([42]);
+  });
+});
+
+describe("shapeShowsList", () => {
+  it("maps every show row (no LIMIT) the same way topShows does", () => {
+    const sets = parseWranglerJson(
+      wrangler([
+        [
+          { tmdb_id: 1399, episodes: 10, canonical: 2, confirmed: 3, candidate: 5, avg_conf: 0.9 },
+          { tmdb_id: 655, episodes: 1, canonical: 0, confirmed: 0, candidate: 1, avg_conf: 0.5 },
+        ],
+      ]),
+    ) as unknown[][];
+    const { shows } = shapeShowsList(sets);
+    expect(shows).toHaveLength(2);
+    expect(shows[0]).toEqual({
+      tmdb_id: 1399,
+      episodes: 10,
+      canonical: 2,
+      confirmed: 3,
+      candidate: 5,
+      avg_conf: 0.9,
+    });
+  });
+
+  it("returns an empty list for an empty set", () => {
+    expect(shapeShowsList([[]]).shows).toEqual([]);
+  });
+});
+
+describe("shapeShow", () => {
+  it("shapes episodes, derives tier summary, and fills season gaps via maxEpisode", () => {
+    const sets = parseWranglerJson(
+      wrangler([
+        [
+          {
+            season: 1,
+            episode: 1,
+            tier: "canonical",
+            mean_confidence: 0.95,
+            unique_contributors: 4,
+            contributions: 12,
+            hash_count: 850,
+            promoted_at: 1780000000,
+          },
+          // gap: S01E02 missing — maxEpisode must still reach 3
+          {
+            season: 1,
+            episode: 3,
+            tier: "candidate",
+            mean_confidence: 0.7,
+            unique_contributors: 1,
+            contributions: 2,
+            hash_count: null,
+            promoted_at: 1780000500,
+          },
+        ],
+        [
+          { tier: "canonical", n: 1, avg_conf: 0.95 },
+          { tier: "candidate", n: 1, avg_conf: 0.7 },
+        ],
+      ]),
+    ) as unknown[][];
+    const d = shapeShow(sets);
+    expect(d.episodes).toHaveLength(2);
+    expect(d.episodes[1].hash_count).toBe(0); // null -> 0
+    expect(d.tierCounts).toEqual({ candidate: 1, confirmed: 0, canonical: 1 });
+    expect(d.tierConf.canonical).toBe(0.95);
+    expect(d.seasons).toEqual([{ season: 1, maxEpisode: 3 }]);
+  });
+
+  it("returns empty/zeroed shape for a show with no episodes", () => {
+    const d = shapeShow([[], []]);
+    expect(d.episodes).toEqual([]);
+    expect(d.tierCounts).toEqual({ candidate: 0, confirmed: 0, canonical: 0 });
+    expect(d.seasons).toEqual([]);
+  });
+});
+
+describe("shapeTier", () => {
+  const rows = [
+    {
+      tmdb_id: 1399,
+      season: 1,
+      episode: 1,
+      mean_confidence: 0.9,
+      unique_contributors: 3,
+      hash_count: 800,
+      promoted_at: 1780000000,
+    },
+    {
+      tmdb_id: 655,
+      season: 2,
+      episode: 4,
+      mean_confidence: 0.88,
+      unique_contributors: 2,
+      hash_count: 600,
+      promoted_at: 1780000100,
+    },
+  ];
+
+  it("flags hasMore when the page came back full", () => {
+    const sets = parseWranglerJson(wrangler([rows])) as unknown[][];
+    expect(shapeTier(sets, 2).hasMore).toBe(true);
+    expect(shapeTier(sets, 200).hasMore).toBe(false);
+  });
+
+  it("preserves row order and maps fields", () => {
+    const sets = parseWranglerJson(wrangler([rows])) as unknown[][];
+    const { episodes } = shapeTier(sets, 200);
+    expect(episodes.map((e) => e.tmdb_id)).toEqual([1399, 655]);
+    expect(episodes[0]).toEqual({
+      tmdb_id: 1399,
+      season: 1,
+      episode: 1,
+      mean_confidence: 0.9,
+      unique_contributors: 3,
+      hash_count: 800,
+      promoted_at: 1780000000,
+    });
   });
 });
