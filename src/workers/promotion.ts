@@ -1,16 +1,26 @@
 import { decodeZstdVarint, encodeZstdVarint } from "../codec";
-import { minhash128 } from "../minhash";
 import type { Env } from "../routes/contribute";
+
+// Minimum match_confidence for a contribution to be included in promotion.
+// Mirror this value in dashboard/queries.sql (Query [2]) — SQL cannot import it directly.
+export const MIN_PROMOTION_CONFIDENCE = 0.7;
 
 export async function runPromotion(env: Env): Promise<void> {
   // 1. Find all distinct (tmdb_id, season, episode) with unpromoted contributions
   const groups = await env.DB.prepare(
     `SELECT DISTINCT tmdb_id, season, episode FROM contribution
-     WHERE promoted_at IS NULL AND poison_check = 'pass'`,
+     WHERE promoted_at IS NULL AND poison_check = 'pass' AND match_confidence >= ${MIN_PROMOTION_CONFIDENCE}`,
   ).all<{ tmdb_id: number; season: number | null; episode: number | null }>();
 
   for (const g of groups.results) {
-    await promoteOne(env, g.tmdb_id, g.season, g.episode);
+    try {
+      await promoteOne(env, g.tmdb_id, g.season, g.episode);
+    } catch (err) {
+      console.error(
+        `[promotion] promoteOne failed tmdb_id=${g.tmdb_id} s=${g.season} e=${g.episode}:`,
+        err,
+      );
+    }
   }
 }
 
@@ -28,11 +38,11 @@ async function promoteOne(
        SELECT pseudonym, MAX(received_at) AS max_rcv
        FROM contribution
        WHERE tmdb_id = ? AND season IS ? AND episode IS ?
-         AND promoted_at IS NULL AND poison_check = 'pass' AND match_confidence >= 0.70
+         AND promoted_at IS NULL AND poison_check = 'pass' AND match_confidence >= ${MIN_PROMOTION_CONFIDENCE}
        GROUP BY pseudonym
      ) latest ON c.pseudonym = latest.pseudonym AND c.received_at = latest.max_rcv
      WHERE c.tmdb_id = ? AND c.season IS ? AND c.episode IS ?
-       AND c.promoted_at IS NULL AND c.poison_check = 'pass' AND c.match_confidence >= 0.70`,
+       AND c.promoted_at IS NULL AND c.poison_check = 'pass' AND c.match_confidence >= ${MIN_PROMOTION_CONFIDENCE}`,
   )
     .bind(tmdb_id, season, episode, tmdb_id, season, episode)
     .all<{
@@ -109,17 +119,6 @@ async function promoteOne(
        promoted_at = excluded.promoted_at`,
   )
     .bind(tmdb_id, season, episode, tier, consensusBlob, independentCount, meanConfidence)
-    .run();
-
-  // Upsert sketch (only on tier change OR new row — for simplicity, always upsert)
-  const sketch = minhash128(consensusHashes);
-  await env.DB.prepare(
-    `INSERT INTO canonical_sketch (tmdb_id, season, episode, sketch, hash_count, generated_at)
-     VALUES (?, ?, ?, ?, ?, unixepoch())
-     ON CONFLICT (tmdb_id, season, episode) DO UPDATE SET
-       sketch = excluded.sketch, hash_count = excluded.hash_count, generated_at = excluded.generated_at`,
-  )
-    .bind(tmdb_id, season, episode, sketch, consensusHashes.length)
     .run();
 
   // Mark contributions promoted
