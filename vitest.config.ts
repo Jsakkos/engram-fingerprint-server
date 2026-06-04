@@ -19,7 +19,14 @@ export default defineWorkersConfig(async () => {
             // Exposed to tests as env.TEST_MIGRATIONS (see test/setup.ts).
             // ALLOW_DEV_SEED enables the gated POST /v1/_dev/seed route under test
             // (it is absent from wrangler.toml, so the route stays 404 in production).
-            bindings: { TEST_MIGRATIONS: migrations, ALLOW_DEV_SEED: "1" },
+            // CANONICAL_HOST / SUNSET_DATE activate the domain-migration deprecation
+            // signal under test without putting a real domain into wrangler.toml.
+            bindings: {
+              TEST_MIGRATIONS: migrations,
+              ALLOW_DEV_SEED: "1",
+              CANONICAL_HOST: "api.engram.example",
+              SUNSET_DATE: "Thu, 31 Dec 2026 23:59:59 GMT",
+            },
           },
         },
       },

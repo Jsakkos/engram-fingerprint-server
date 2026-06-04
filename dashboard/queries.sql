@@ -102,3 +102,20 @@ SELECT
 FROM contribution
 ORDER BY received_at DESC
 LIMIT 25;
+
+-- [17] contributions in the last 30 days by ingress host (domain-migration drain gauge)
+-- 2592000 = 30 * 24 * 60 * 60 seconds. ingress_host is NULL for rows predating
+-- migration 002; those group under a single NULL bucket.
+SELECT ingress_host, COUNT(*) AS n
+FROM contribution
+WHERE received_at >= unixepoch() - 2592000
+GROUP BY ingress_host
+ORDER BY n DESC;
+
+-- [18] distinct active contributors in the last 30 days by ingress host — the key
+-- retirement signal: how many people still ride the legacy *.workers.dev host.
+SELECT ingress_host, COUNT(DISTINCT pseudonym) AS n
+FROM contribution
+WHERE received_at >= unixepoch() - 2592000
+GROUP BY ingress_host
+ORDER BY n DESC;

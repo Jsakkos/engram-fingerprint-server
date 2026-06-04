@@ -150,6 +150,7 @@ function render(d) {
   renderPoison(d);
   renderShows(d.topShows, d.names);
   renderContributors(d.topContributors);
+  renderIngress(d.ingressHosts);
   renderFeed(d.recent, d.names);
 }
 
@@ -507,6 +508,38 @@ function renderContributors(list) {
   host.innerHTML =
     "<table><thead><tr>" +
     '<th>Pseudonym</th><th class="num">Submissions</th><th>Status</th>' +
+    `</tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+// Domain-migration drain gauge: contributions + distinct contributors per ingress
+// host over the last 30 days. The legacy *.workers.dev host is badged so its
+// distinct-contributor count can be watched to ~0 before retirement; a null host
+// (rows predating the ingress_host column) renders as "(unrecorded)".
+function renderIngress(list) {
+  const host = $("ingressTable");
+  if (!list?.length) {
+    host.innerHTML = '<div class="empty-state">no recent contributions</div>';
+    return;
+  }
+  const rows = list
+    .map((h) => {
+      const label = h.host ? escapeHtml(h.host) : '<span class="mono-dim">(unrecorded)</span>';
+      const badge = h.legacy
+        ? '<span class="badge flag">legacy</span>'
+        : '<span class="badge ok">current</span>';
+      return (
+        "<tr>" +
+        `<td class="mono-dim">${label}</td>` +
+        `<td class="num">${fmtNum(h.contributions)}</td>` +
+        `<td class="num">${fmtNum(h.contributors)}</td>` +
+        `<td>${badge}</td>` +
+        "</tr>"
+      );
+    })
+    .join("");
+  host.innerHTML =
+    "<table><thead><tr>" +
+    '<th>Host</th><th class="num">Contributions</th><th class="num">Contributors</th><th>Status</th>' +
     `</tr></thead><tbody>${rows}</tbody></table>`;
 }
 

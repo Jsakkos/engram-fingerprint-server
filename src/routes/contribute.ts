@@ -121,6 +121,7 @@ export async function handleContribute(request: Request, env: Env): Promise<Resp
     fingerprintBytes,
     fingerprintSha256,
     poisonCheck,
+    new URL(request.url).hostname,
   );
 
   if (!result.isDuplicate) {
@@ -156,4 +157,9 @@ export interface Env {
   // binding). Absent in local dev and the vitest workers pool — guarded at the
   // call site so those paths proceed without it.
   CONTRIBUTE_RATE_LIMITER?: RateLimit;
+  // Domain-migration signalling (see src/deprecation.ts). Both optional: when
+  // CANONICAL_HOST is unset the legacy-host deprecation headers stay off, so the
+  // mechanism can ship before the new domain exists.
+  CANONICAL_HOST?: string;
+  SUNSET_DATE?: string;
 }

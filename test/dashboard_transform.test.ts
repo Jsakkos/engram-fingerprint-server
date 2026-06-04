@@ -94,6 +94,39 @@ describe("dashboard transform", () => {
     expect(d.timeseries.byTier.canonical).toEqual([]);
   });
 
+  it("merges per-host contribution + contributor counts into the ingress drain gauge", () => {
+    const contributionsByHost = [
+      { ingress_host: "api.engram.example", n: 120 },
+      { ingress_host: "engram-fp-prod.someone.workers.dev", n: 8 },
+      { ingress_host: null, n: 3 }, // rows predating migration 002
+    ];
+    const contributorsByHost = [
+      { ingress_host: "api.engram.example", n: 5 },
+      { ingress_host: "engram-fp-prod.someone.workers.dev", n: 1 },
+    ];
+    const sets = parseWranglerJson(
+      wrangler([...SETS, contributionsByHost, contributorsByHost]),
+    ) as unknown[][];
+    const d = shapePayload(sets);
+    // Sorted by contribution volume; `legacy` flags *.workers.dev hosts (the
+    // host that must drain before retirement); null host reported as-is.
+    expect(d.ingressHosts).toEqual([
+      { host: "api.engram.example", contributions: 120, contributors: 5, legacy: false },
+      {
+        host: "engram-fp-prod.someone.workers.dev",
+        contributions: 8,
+        contributors: 1,
+        legacy: true,
+      },
+      { host: null, contributions: 3, contributors: 0, legacy: false },
+    ]);
+  });
+
+  it("defaults the ingress gauge to an empty list when the sets are absent", () => {
+    const sets = parseWranglerJson(wrangler(SETS)) as unknown[][];
+    expect(shapePayload(sets).ingressHosts).toEqual([]);
+  });
+
   it("tolerates leading notice lines before the JSON array", () => {
     const noisy = `├ Checking if file needs uploading\n│\n${wrangler(SETS)}`;
     const sets = parseWranglerJson(noisy);
