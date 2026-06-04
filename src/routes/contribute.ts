@@ -7,6 +7,7 @@ import {
   recordOverlapObservation,
   screenAntiPoison,
 } from "../db_anti_poison";
+import type { DeprecationEnv } from "../deprecation";
 import { ContributionRequestSchema } from "../schemas";
 
 // The cheap MinHash pre-screen fires above (threshold - SCREEN_MARGIN); the exact check then
@@ -14,7 +15,13 @@ import { ContributionRequestSchema } from "../schemas";
 // and the exact overlap, and it bounds the valid threshold range (see handleContribute).
 const SCREEN_MARGIN = 0.1;
 
-export async function handleContribute(request: Request, env: Env): Promise<Response> {
+// `url` is supplied by the router (already parsed) so the hot path doesn't reparse
+// request.url; it defaults to a fresh parse for direct callers (tests) that omit it.
+export async function handleContribute(
+  request: Request,
+  env: Env,
+  url: URL = new URL(request.url),
+): Promise<Response> {
   // Fail loud on a misconfigured threshold rather than silently corrupting the canonical set.
   // parseFloat of a missing/non-numeric value is NaN, and every `> NaN` below is false — which
   // would disable the screen. A value below SCREEN_MARGIN drives screenThreshold negative
@@ -121,7 +128,7 @@ export async function handleContribute(request: Request, env: Env): Promise<Resp
     fingerprintBytes,
     fingerprintSha256,
     poisonCheck,
-    new URL(request.url).hostname,
+    url.hostname,
   );
 
   if (!result.isDuplicate) {
@@ -145,7 +152,7 @@ export async function handleContribute(request: Request, env: Env): Promise<Resp
   );
 }
 
-export interface Env {
+export interface Env extends DeprecationEnv {
   DB: D1Database;
   PACKS: R2Bucket;
   // Optional: Workers deliver `undefined` for an absent [vars] binding at runtime, so the
@@ -157,9 +164,6 @@ export interface Env {
   // binding). Absent in local dev and the vitest workers pool — guarded at the
   // call site so those paths proceed without it.
   CONTRIBUTE_RATE_LIMITER?: RateLimit;
-  // Domain-migration signalling (see src/deprecation.ts). Both optional: when
-  // CANONICAL_HOST is unset the legacy-host deprecation headers stay off, so the
-  // mechanism can ship before the new domain exists.
-  CANONICAL_HOST?: string;
-  SUNSET_DATE?: string;
+  // CANONICAL_HOST / SUNSET_DATE come from DeprecationEnv (src/deprecation.ts) —
+  // extended above so the migration-signal vars stay declared in one place.
 }

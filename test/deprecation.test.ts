@@ -23,6 +23,13 @@ describe("withSunsetHeaders", () => {
     );
   });
 
+  it("preserves the query string in the successor Link", () => {
+    const res = withSunsetHeaders(legacy("/v1/identify?fp=abc&k=5"), new Response(null), liveEnv);
+    expect(res.headers.get("Link")).toBe(
+      '<https://api.engram.example/v1/identify?fp=abc&k=5>; rel="successor-version"',
+    );
+  });
+
   it("preserves the original status and body", async () => {
     const res = withSunsetHeaders(legacy(), new Response("not found", { status: 404 }), liveEnv);
     expect(res.status).toBe(404);

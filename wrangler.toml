@@ -4,6 +4,8 @@ compatibility_date = "2026-05-27"
 compatibility_flags = ["nodejs_compat"]
 
 # --- Domain migration (see README "Domain migration" + src/deprecation.ts) ------
+# Only the config-relevant phases appear here (A/C/E); Phase B is the telemetry
+# migration + dashboard gauge and Phase D is the engram client release.
 # Phase A — owned host attached. engramfp.com's zone is on this Cloudflare account,
 # so on deploy wrangler provisions DNS + the TLS cert and api.engramfp.com serves
 # the SAME Worker/D1/R2 as the default *.workers.dev preview.

@@ -30,7 +30,9 @@ export function withSunsetHeaders(url: URL, response: Response, env: Deprecation
     return response;
   }
 
-  const successor = `https://${env.CANONICAL_HOST}${url.pathname}`;
+  // Preserve the query string too — /v1/identify carries ?fp=…&k=… that a client
+  // treating the successor Link as a redirect target would otherwise lose.
+  const successor = `https://${env.CANONICAL_HOST}${url.pathname}${url.search}`;
   const headers = new Headers(response.headers);
   headers.set("Deprecation", "true");
   if (env.SUNSET_DATE) headers.set("Sunset", env.SUNSET_DATE);

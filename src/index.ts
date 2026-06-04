@@ -29,7 +29,7 @@ async function routeRequest(request: Request, env: Env, url: URL): Promise<Respo
     if (request.method !== "POST") {
       return new Response("Method Not Allowed", { status: 405 });
     }
-    return handleContribute(request, env);
+    return handleContribute(request, env, url);
   }
   if (url.pathname === "/v1/forget") {
     if (request.method !== "POST") {
