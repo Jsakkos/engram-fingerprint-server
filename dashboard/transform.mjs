@@ -25,6 +25,8 @@ export const QUERY_MAP = [
   "topShows", // [14]
   "topContributors", // [15]
   "recentContributions", // [16]
+  "ingressContributionsByHost", // [17]
+  "ingressContributorsByHost", // [18]
 ];
 
 export function parseWranglerJson(stdout) {
@@ -117,6 +119,35 @@ function mapShowRow(r) {
   };
 }
 
+// Merge the last-30-day "contributions by host" and "distinct contributors by
+// host" result sets into one per-host row, sorted by contribution volume. This
+// is the domain-migration drain gauge: `legacy` marks *.workers.dev hosts, whose
+// distinct-contributor count must reach ~0 before the old preview host is
+// retired. A null host (rows predating migration 002's ingress_host column) is
+// reported as-is rather than dropped.
+function mergeIngressHosts(contributionSet, contributorSet) {
+  const byHost = new Map();
+  const ensure = (host) => {
+    // A Map keys on null directly, so no string sentinel is needed; normalise
+    // undefined -> null so both fold into one bucket.
+    const key = host ?? null;
+    let row = byHost.get(key);
+    if (!row) {
+      row = {
+        host: key,
+        contributions: 0,
+        contributors: 0,
+        legacy: typeof key === "string" && key.endsWith(".workers.dev"),
+      };
+      byHost.set(key, row);
+    }
+    return row;
+  };
+  for (const r of contributionSet ?? []) ensure(r.ingress_host).contributions = num(r.n);
+  for (const r of contributorSet ?? []) ensure(r.ingress_host).contributors = num(r.n);
+  return [...byHost.values()].sort((a, b) => b.contributions - a.contributions);
+}
+
 export function shapePayload(sets) {
   const get = (name) => sets[QUERY_MAP.indexOf(name)] ?? [];
 
@@ -181,6 +212,10 @@ export function shapePayload(sets) {
       poison_check: r.poison_check,
       promoted: r.promoted_at != null,
     })),
+    ingressHosts: mergeIngressHosts(
+      get("ingressContributionsByHost"),
+      get("ingressContributorsByHost"),
+    ),
   };
 }
 

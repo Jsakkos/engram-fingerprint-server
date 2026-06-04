@@ -3,6 +3,27 @@ main = "src/index.ts"
 compatibility_date = "2026-05-27"
 compatibility_flags = ["nodejs_compat"]
 
+# --- Domain migration (see README "Domain migration" + src/deprecation.ts) ------
+# Only the config-relevant phases appear here (A/C/E); Phase B is the telemetry
+# migration + dashboard gauge and Phase D is the engram client release.
+# Phase A — owned host attached. engramfp.com's zone is on this Cloudflare account,
+# so on deploy wrangler provisions DNS + the TLS cert and api.engramfp.com serves
+# the SAME Worker/D1/R2 as the default *.workers.dev preview.
+routes = [
+  { pattern = "api.engramfp.com", custom_domain = true },
+]
+
+# Phase C — turn on the deprecation signal only AFTER api.engramfp.com is confirmed
+# resolving: deploy this route, verify the host answers, THEN uncomment
+# CANONICAL_HOST / SUNSET_DATE in [vars] below. (Setting it earlier would point the
+# legacy host's clients at an address that doesn't resolve yet.)
+#
+# Phase E — retire the legacy preview host. Once the dashboard "Ingress hosts"
+# gauge shows ~0 distinct contributors on the *.workers.dev host for a sustained
+# window AND SUNSET_DATE has passed, set this and deploy to take the name-bearing
+# host offline (reversible — flip back to re-enable):
+# workers_dev = false
+
 # D1 binding (created in Task S1.2)
 [[d1_databases]]
 binding = "DB"
@@ -33,6 +54,14 @@ simple = { limit = 600, period = 60 }
 [vars]
 POISON_CONFLICT_THRESHOLD = "0.70"
 IDENTIFY_MIN_SCORE = "0.15"
+# Domain-migration signal (Phase C). OFF until CANONICAL_HOST is set: every
+# response served on the legacy *.workers.dev host then advertises the successor
+# via Deprecation / Sunset / Link headers (src/deprecation.ts), which the engram
+# client surfaces as an upgrade notice. SUNSET_DATE is the announced retirement
+# date (HTTP-date, RFC 8594). Set CANONICAL_HOST to the host attached in `routes`
+# above; leaving it unset keeps the signal inert, so this can ship pre-domain.
+# CANONICAL_HOST = "api.engramfp.com"
+# SUNSET_DATE = "Thu, 31 Dec 2026 23:59:59 GMT"
 
 # WASM module rule: tells wrangler/Miniflare to serve .wasm files as CompiledWasm
 # modules so they can be imported directly rather than fetched via file://.

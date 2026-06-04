@@ -12,6 +12,7 @@ export async function insertContribution(
   fingerprintBytes: Uint8Array,
   fingerprintSha256: Uint8Array,
   poisonCheck: PoisonCheck,
+  ingressHost: string | null,
 ): Promise<ContributionInsertResult> {
   // Dedupe check first — use IS instead of = so NULL season/episode matches correctly
   const existing = await db
@@ -34,8 +35,9 @@ export async function insertContribution(
     .prepare(
       `INSERT INTO contribution
        (pseudonym, tmdb_id, season, episode, fingerprint, fingerprint_sha256,
-        disc_content_hash, match_confidence, match_source, client_version, poison_check)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        disc_content_hash, match_confidence, match_source, client_version, poison_check,
+        ingress_host)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       req.pseudonym,
@@ -49,6 +51,7 @@ export async function insertContribution(
       req.match_source,
       req.client_version,
       poisonCheck,
+      ingressHost,
     )
     .run();
 

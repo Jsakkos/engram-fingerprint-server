@@ -38,7 +38,32 @@ Phase 3 will add `GET /v1/identify` and `GET /v1/pack/{tmdb_id}`.
 
 ## Schema
 
-See `migrations/001_initial.sql`.
+See `migrations/001_initial.sql`. `migrations/002_ingress_host.sql` adds
+`contribution.ingress_host` for the domain migration (below).
+
+## Domain migration
+
+This Worker can serve the default `*.workers.dev` preview host and an owned custom
+domain **simultaneously** against the same D1/R2 — so moving to a new domain is a
+drain-and-retire, not a data migration. The flow is staged so nothing breaks while
+clients (which are downloaded from GitHub and update at their own pace) catch up:
+
+1. **Attach the domain.** Uncomment the `routes` block in `wrangler.toml` with your
+   owned host and deploy. Both hosts now serve identically.
+2. **Watch the drain.** Every contribution records the host it arrived on
+   (`ingress_host`); the dashboard's **Ingress hosts** panel shows contributions and
+   *distinct contributors* per host over the last 30 days, with the legacy
+   `*.workers.dev` host badged. That distinct-contributor count is the retirement
+   signal.
+3. **Signal the move.** Set `CANONICAL_HOST` (and optionally `SUNSET_DATE`) in
+   `[vars]`. Responses served on the legacy host then carry `Deprecation`, `Sunset`,
+   and a `Link: …; rel="successor-version"` header (`src/deprecation.ts`); the engram
+   client surfaces this as an upgrade notice. Requests on the canonical host are
+   untouched. The mechanism is inert until `CANONICAL_HOST` is set, so it can ship
+   before the domain exists.
+4. **Retire.** Once the gauge shows ~0 distinct contributors on the legacy host for a
+   sustained window and `SUNSET_DATE` has passed, set `workers_dev = false` and
+   deploy to take the preview host offline (reversible).
 
 ## Catalog dashboard
 
