@@ -13,6 +13,13 @@ routes = [
   { pattern = "api.engramfp.com", custom_domain = true },
 ]
 
+# Soft sunset: keep the legacy *.workers.dev host serving so existing contributors
+# (who update at their own pace) keep working and receive the deprecation nudge
+# below. Stated explicitly because the dashboard toggle is NOT durable — `workers_dev`
+# defaults to true and wrangler treats this file as the source of truth, so a deploy
+# reconciles the toggle to whatever is here. Phase E flips this to false to retire.
+workers_dev = true
+
 # Phase C — turn on the deprecation signal only AFTER api.engramfp.com is confirmed
 # resolving: deploy this route, verify the host answers, THEN uncomment
 # CANONICAL_HOST / SUNSET_DATE in [vars] below. (Setting it earlier would point the
@@ -20,9 +27,8 @@ routes = [
 #
 # Phase E — retire the legacy preview host. Once the dashboard "Ingress hosts"
 # gauge shows ~0 distinct contributors on the *.workers.dev host for a sustained
-# window AND SUNSET_DATE has passed, set this and deploy to take the name-bearing
-# host offline (reversible — flip back to re-enable):
-# workers_dev = false
+# window AND SUNSET_DATE has passed, flip the line above to `workers_dev = false`
+# and deploy to take the name-bearing host offline (reversible).
 
 # D1 binding (created in Task S1.2)
 [[d1_databases]]
