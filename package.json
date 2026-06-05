@@ -27,13 +27,13 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",
-    "@cloudflare/vitest-pool-workers": "^0.12.4",
+    "@cloudflare/vitest-pool-workers": "^0.16.13",
     "@types/node": "^22.0.0",
     "@vitest/coverage-istanbul": "~3.2.4",
-    "lefthook": "^2.1.8",
+    "lefthook": "^2.1.9",
     "typescript": "^5.5.2",
     "vitest": "~3.2.0",
-    "wrangler": "^4.95.0"
+    "wrangler": "^4.98.0"
   },
   "dependencies": {
     "@bokuweb/zstd-wasm": "^0.0.27",
