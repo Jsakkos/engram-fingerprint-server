@@ -159,8 +159,9 @@ describe("POST /v1/contribute-disc", () => {
   });
 
   it("accepts a movie contribution (content_type movie, null season, main_movie title)", async () => {
+    const psn = "66666666-6666-4666-8666-666666666666";
     const body = validBody({
-      pseudonym: "66666666-6666-4666-8666-666666666666",
+      pseudonym: psn,
       content_type: "movie",
       season: null,
       titles: [
@@ -179,6 +180,15 @@ describe("POST /v1/contribute-disc", () => {
     const res = await post(body);
     expect(res.status).toBe(202);
     expect(((await res.json()) as { status: string }).status).toBe("accepted");
+
+    // The movie's null season and content_type must persist as written.
+    const row = await env.DB.prepare(
+      `SELECT content_type, season FROM disc_contribution WHERE pseudonym = ?`,
+    )
+      .bind(psn)
+      .first<{ content_type: string; season: number | null }>();
+    expect(row?.content_type).toBe("movie");
+    expect(row?.season).toBeNull();
   });
 
   it("silently drops a flagged contributor (200 duplicate, no row written)", async () => {

@@ -50,7 +50,9 @@ export const ContributeDiscRequestSchema = z.object({
   tmdb_id: z.number().int().positive(),
   content_type: z.enum(["tv", "movie"]),
   season: z.number().int().min(0).nullable(),
-  titles: z.array(DiscTitleRowSchema).min(1),
+  // Upper bound: a real disc has dozens of titles, never hundreds. The cap stops a
+  // pathological payload from forcing an unbounded JSON.stringify + sha256 digest.
+  titles: z.array(DiscTitleRowSchema).min(1).max(500),
   client_version: z.string().min(1).max(100),
 });
 
@@ -81,4 +83,18 @@ export const IdentifyCandidateSchema = z.object({
 
 export const IdentifyResponseSchema = z.object({
   candidates: z.array(IdentifyCandidateSchema),
+});
+
+export const IdentifyDiscResponseSchema = z.object({
+  disc: z
+    .object({
+      tmdb_id: z.number().int().positive(),
+      content_type: z.enum(["tv", "movie"]),
+      season: z.number().int().min(0).nullable(),
+      tier: z.enum(["candidate", "confirmed", "canonical"]),
+      unique_contributors: z.number().int().min(0),
+      mean_confidence: z.number().min(0).max(1),
+      titles: z.array(DiscTitleRowSchema),
+    })
+    .nullable(),
 });

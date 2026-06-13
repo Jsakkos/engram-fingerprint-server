@@ -32,14 +32,25 @@ hatch.
 ## Endpoints (Phase 2)
 
 - `POST /v1/contribute` — accept a chromaprint contribution.
-- `POST /v1/forget` — delete all rows for a pseudonym.
+- `POST /v1/forget` — delete all rows for a pseudonym (now also cascades to
+  disc-recognition intake).
 
-Phase 3 will add `GET /v1/identify` and `GET /v1/pack/{tmdb_id}`.
+Phase 3 adds `GET /v1/identify` and `GET /v1/pack/{tmdb_id}`.
+
+Phase C (disc recognition) adds two more:
+
+- `POST /v1/contribute-disc` — accept a disc layout → identity mapping (a disc's
+  content hash plus how each title maps to a show/episode set).
+- `GET /v1/identify-disc?hash=<b64url>` — look up a promoted disc by content hash
+  (base64url-encoded, mirroring `/v1/identify`'s `fp`). Returns `{ "disc": null }`
+  on a miss or `{ "disc": { … } }` for a disc that has been promoted to canonical.
 
 ## Schema
 
 See `migrations/001_initial.sql`. `migrations/002_ingress_host.sql` adds
 `contribution.ingress_host` for the domain migration (below).
+`migrations/003_disc_recognition.sql` adds `disc_contribution` (raw per-pseudonym
+intake) + `disc_canonical` (promoted aggregate) for disc-hash recognition.
 
 ## Domain migration
 

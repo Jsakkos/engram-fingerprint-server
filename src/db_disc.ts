@@ -54,8 +54,9 @@ export async function insertDiscContribution(
 
   const contributionId = result.meta.last_row_id;
 
-  // Track disc-only contributors the same way episode contributions do, so
-  // /v1/forget + the flagged screen stay uniform across both intake paths.
+  // Track disc-only contributors the same way episode contributions do, so the
+  // flagged screen and /v1/forget (which deletes disc_contribution by pseudonym)
+  // stay uniform across both intake paths.
   await db
     .prepare(
       `INSERT INTO contributor (pseudonym, first_seen, last_seen, contribution_count, flagged, flag_count)
@@ -68,4 +69,27 @@ export async function insertDiscContribution(
     .run();
 
   return { contributionId, isDuplicate: false };
+}
+
+export interface DiscCanonicalRow {
+  tmdb_id: number;
+  content_type: string;
+  season: number | null;
+  titles_json: string;
+  tier: string;
+  unique_contributors: number;
+  mean_confidence: number;
+}
+
+export async function getDiscCanonical(
+  db: D1Database,
+  discContentHash: Uint8Array,
+): Promise<DiscCanonicalRow | null> {
+  return await db
+    .prepare(
+      `SELECT tmdb_id, content_type, season, titles_json, tier, unique_contributors, mean_confidence
+       FROM disc_canonical WHERE disc_content_hash = ?`,
+    )
+    .bind(discContentHash)
+    .first<DiscCanonicalRow>();
 }

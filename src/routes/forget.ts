@@ -22,11 +22,20 @@ export async function handleForget(request: Request, env: Env): Promise<Response
   const contribResult = await env.DB.prepare(`DELETE FROM contribution WHERE pseudonym = ?`)
     .bind(pseudonym)
     .run();
+  // Disc contributions are per-pseudonym intake too, so erasure must cover them.
+  // disc_canonical is aggregate/anonymous (no pseudonym) — left untouched, hence
+  // canonical_unaffected stays true below.
+  const discResult = await env.DB.prepare(`DELETE FROM disc_contribution WHERE pseudonym = ?`)
+    .bind(pseudonym)
+    .run();
   const contributorResult = await env.DB.prepare(`DELETE FROM contributor WHERE pseudonym = ?`)
     .bind(pseudonym)
     .run();
 
-  const rowsDeleted = (contribResult.meta.changes ?? 0) + (contributorResult.meta.changes ?? 0);
+  const rowsDeleted =
+    (contribResult.meta.changes ?? 0) +
+    (discResult.meta.changes ?? 0) +
+    (contributorResult.meta.changes ?? 0);
 
   return Response.json({ rows_deleted: rowsDeleted, canonical_unaffected: true }, { status: 200 });
 }

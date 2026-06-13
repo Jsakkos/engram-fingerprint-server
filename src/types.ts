@@ -7,6 +7,7 @@ import type {
   DiscTitleRowSchema,
   ForgetRequestSchema,
   ForgetResponseSchema,
+  IdentifyDiscResponseSchema,
 } from "./schemas";
 
 export type ContributionRequest = z.infer<typeof ContributionRequestSchema>;
@@ -16,6 +17,7 @@ export type ForgetResponse = z.infer<typeof ForgetResponseSchema>;
 export type ContributeDiscRequest = z.infer<typeof ContributeDiscRequestSchema>;
 export type ContributeDiscResponse = z.infer<typeof ContributeDiscResponseSchema>;
 export type DiscTitleRow = z.infer<typeof DiscTitleRowSchema>;
+export type IdentifyDiscResponse = z.infer<typeof IdentifyDiscResponseSchema>;
 
 export type PoisonCheck = "pass" | "flag_conflict" | "flag_duplicate";
 

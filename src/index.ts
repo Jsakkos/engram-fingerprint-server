@@ -4,6 +4,7 @@ import { handleContributeDisc } from "./routes/contribute_disc";
 import { handleDevSeed } from "./routes/dev_seed";
 import { handleForget } from "./routes/forget";
 import { handleIdentify } from "./routes/identify";
+import { handleIdentifyDisc } from "./routes/identify_disc";
 import { handlePack } from "./routes/pack";
 import { runPackBuilder, runSketchBuilder } from "./workers/pack_builder";
 import { runPromotion } from "./workers/promotion";
@@ -48,6 +49,11 @@ async function routeRequest(request: Request, env: Env, url: URL): Promise<Respo
   if (url.pathname === "/v1/identify") {
     if (request.method !== "GET") return new Response("Method Not Allowed", { status: 405 });
     return handleIdentify(request, env);
+  }
+
+  if (url.pathname === "/v1/identify-disc") {
+    if (request.method !== "GET") return new Response("Method Not Allowed", { status: 405 });
+    return handleIdentifyDisc(request, env);
   }
 
   const packMatch = url.pathname.match(/^\/v1\/pack\/(\d+)$/);
