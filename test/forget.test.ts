@@ -23,7 +23,7 @@ describe("POST /v1/forget", () => {
     expect(json.canonical_unaffected).toBe(true);
   });
 
-  it("deletes all contribution + contributor rows for a known pseudonym", async () => {
+  it("deletes all contribution + disc_contribution + contributor rows for a known pseudonym", async () => {
     // Seed contributor + contributions
     const psn = "66666666-6666-4666-8666-666666666666";
     await env.DB.prepare(
@@ -38,6 +38,15 @@ describe("POST /v1/forget", () => {
     )
       .bind(psn, new Uint8Array([1, 2]), new Uint8Array([3, 4]))
       .run();
+    // A disc contribution for the same pseudonym must also be erased.
+    await env.DB.prepare(
+      `INSERT INTO disc_contribution
+         (pseudonym, disc_content_hash, tmdb_id, content_type, season,
+          titles_json, titles_digest, client_version)
+       VALUES (?, ?, 99, 'tv', 1, '[]', 'deadbeef', 'engram/0.9.2')`,
+    )
+      .bind(psn, new Uint8Array([5, 6, 7, 8]))
+      .run();
 
     const res = await SELF.fetch("https://example.com/v1/forget", {
       method: "POST",
@@ -45,8 +54,10 @@ describe("POST /v1/forget", () => {
       body: JSON.stringify({ pseudonym: psn }),
     });
     expect(res.status).toBe(200);
-    const json = (await res.json()) as { rows_deleted: number };
-    expect(json.rows_deleted).toBeGreaterThan(0);
+    const json = (await res.json()) as { rows_deleted: number; canonical_unaffected: boolean };
+    // contribution (1) + disc_contribution (1) + contributor (1) = 3.
+    expect(json.rows_deleted).toBe(3);
+    expect(json.canonical_unaffected).toBe(true);
 
     const remaining = await env.DB.prepare(
       `SELECT COUNT(*) AS n FROM contribution WHERE pseudonym = ?`,
@@ -54,5 +65,12 @@ describe("POST /v1/forget", () => {
       .bind(psn)
       .first<{ n: number }>();
     expect(remaining?.n).toBe(0);
+
+    const discRemaining = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM disc_contribution WHERE pseudonym = ?`,
+    )
+      .bind(psn)
+      .first<{ n: number }>();
+    expect(discRemaining?.n).toBe(0);
   });
 });

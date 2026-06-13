@@ -1,9 +1,12 @@
 import { withSunsetHeaders } from "./deprecation";
 import { type Env, handleContribute } from "./routes/contribute";
+import { handleContributeDisc } from "./routes/contribute_disc";
 import { handleDevSeed } from "./routes/dev_seed";
 import { handleForget } from "./routes/forget";
 import { handleIdentify } from "./routes/identify";
+import { handleIdentifyDisc } from "./routes/identify_disc";
 import { handlePack } from "./routes/pack";
+import { runDiscPromotion } from "./workers/disc_promotion";
 import { runPackBuilder, runSketchBuilder } from "./workers/pack_builder";
 import { runPromotion } from "./workers/promotion";
 
@@ -16,7 +19,10 @@ export default {
   },
 
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    if (controller.cron === "0 3 * * *") ctx.waitUntil(runPromotion(env));
+    if (controller.cron === "0 3 * * *") {
+      ctx.waitUntil(runPromotion(env));
+      ctx.waitUntil(runDiscPromotion(env));
+    }
     if (controller.cron === "0 4 * * *") ctx.waitUntil(runPackBuilder(env));
     // Hourly sketch sweep: ~63 sketches/run within the 30s budget keeps identify
     // coverage ahead of intake without coupling to the daily promotion/pack crons.
@@ -31,6 +37,12 @@ async function routeRequest(request: Request, env: Env, url: URL): Promise<Respo
     }
     return handleContribute(request, env, url);
   }
+  if (url.pathname === "/v1/contribute-disc") {
+    if (request.method !== "POST") {
+      return new Response("Method Not Allowed", { status: 405 });
+    }
+    return handleContributeDisc(request, env, url);
+  }
   if (url.pathname === "/v1/forget") {
     if (request.method !== "POST") {
       return new Response("Method Not Allowed", { status: 405 });
@@ -41,6 +53,11 @@ async function routeRequest(request: Request, env: Env, url: URL): Promise<Respo
   if (url.pathname === "/v1/identify") {
     if (request.method !== "GET") return new Response("Method Not Allowed", { status: 405 });
     return handleIdentify(request, env);
+  }
+
+  if (url.pathname === "/v1/identify-disc") {
+    if (request.method !== "GET") return new Response("Method Not Allowed", { status: 405 });
+    return handleIdentifyDisc(request, env);
   }
 
   const packMatch = url.pathname.match(/^\/v1\/pack\/(\d+)$/);

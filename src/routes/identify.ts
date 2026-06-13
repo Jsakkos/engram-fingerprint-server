@@ -12,7 +12,7 @@ import type { Env } from "./contribute";
 
 const SCREEN_TOP_N = 8; // coarse MinHash candidates kept before exact scoring
 
-function fromB64Url(s: string): Uint8Array {
+export function fromB64Url(s: string): Uint8Array {
   const b64 = s.replace(/-/g, "+").replace(/_/g, "/");
   const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
   return Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));

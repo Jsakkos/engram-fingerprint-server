@@ -9,7 +9,8 @@ export async function runPromotion(env: Env): Promise<void> {
   // 1. Find all distinct (tmdb_id, season, episode) with unpromoted contributions
   const groups = await env.DB.prepare(
     `SELECT DISTINCT tmdb_id, season, episode FROM contribution
-     WHERE promoted_at IS NULL AND poison_check = 'pass' AND match_confidence >= ${MIN_PROMOTION_CONFIDENCE}`,
+     WHERE promoted_at IS NULL AND poison_check = 'pass' AND match_confidence >= ${MIN_PROMOTION_CONFIDENCE}
+       AND match_source != 'network_disc'`,
   ).all<{ tmdb_id: number; season: number | null; episode: number | null }>();
 
   for (const g of groups.results) {
@@ -39,10 +40,12 @@ async function promoteOne(
        FROM contribution
        WHERE tmdb_id = ? AND season IS ? AND episode IS ?
          AND promoted_at IS NULL AND poison_check = 'pass' AND match_confidence >= ${MIN_PROMOTION_CONFIDENCE}
+         AND match_source != 'network_disc'
        GROUP BY pseudonym
      ) latest ON c.pseudonym = latest.pseudonym AND c.received_at = latest.max_rcv
      WHERE c.tmdb_id = ? AND c.season IS ? AND c.episode IS ?
-       AND c.promoted_at IS NULL AND c.poison_check = 'pass' AND c.match_confidence >= ${MIN_PROMOTION_CONFIDENCE}`,
+       AND c.promoted_at IS NULL AND c.poison_check = 'pass' AND c.match_confidence >= ${MIN_PROMOTION_CONFIDENCE}
+       AND c.match_source != 'network_disc'`,
   )
     .bind(tmdb_id, season, episode, tmdb_id, season, episode)
     .all<{
