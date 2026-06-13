@@ -5,13 +5,24 @@ import type { Env } from "../routes/contribute";
 // Mirror this value in dashboard/queries.sql (Query [2]) — SQL cannot import it directly.
 export const MIN_PROMOTION_CONFIDENCE = 0.7;
 
-export async function runPromotion(env: Env): Promise<void> {
-  // 1. Find all distinct (tmdb_id, season, episode) with unpromoted contributions
+// Max episode groups promoted per cron run. Bounds per-invocation D1 work so a
+// single run never depends on draining the whole backlog; oldest-first ordering
+// keeps it fair. Mirrors runSketchBuilder's bounded-sweep pattern.
+export const PROMOTION_BATCH_LIMIT = 100;
+
+export async function runPromotion(env: Env, limit = PROMOTION_BATCH_LIMIT): Promise<void> {
+  // 1. Oldest-eligible (tmdb_id, season, episode) groups first, bounded to `limit`
+  //    per run — nothing starves, and one invocation never tries to drain it all.
   const groups = await env.DB.prepare(
-    `SELECT DISTINCT tmdb_id, season, episode FROM contribution
+    `SELECT tmdb_id, season, episode FROM contribution
      WHERE promoted_at IS NULL AND poison_check = 'pass' AND match_confidence >= ${MIN_PROMOTION_CONFIDENCE}
-       AND match_source != 'network_disc'`,
-  ).all<{ tmdb_id: number; season: number | null; episode: number | null }>();
+       AND match_source != 'network_disc'
+     GROUP BY tmdb_id, season, episode
+     ORDER BY MIN(received_at) ASC
+     LIMIT ?`,
+  )
+    .bind(limit)
+    .all<{ tmdb_id: number; season: number | null; episode: number | null }>();
 
   for (const g of groups.results) {
     try {
