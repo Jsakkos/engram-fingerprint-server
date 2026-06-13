@@ -119,3 +119,43 @@ FROM contribution
 WHERE received_at >= unixepoch() - 2592000
 GROUP BY ingress_host
 ORDER BY n DESC;
+
+-- ===========================================================================
+-- Disc-hash recognition (migration 003). disc_contribution is raw per-pseudonym
+-- disc-layout intake; disc_canonical is the promoted aggregate (one row per disc
+-- content hash). These mirror the episode metrics above for the Signal Lab disc
+-- panels. See src/workers/disc_promotion.ts for how the tiers are derived.
+-- ===========================================================================
+
+-- [19] total raw disc contributions
+SELECT COUNT(*) AS n FROM disc_contribution;
+
+-- [20] distinct discs seen (a disc content hash is stable per pressed release, so
+-- many contributions collapse onto one hash)
+SELECT COUNT(DISTINCT disc_content_hash) AS n FROM disc_contribution;
+
+-- [21] promoted discs by tier — candidate (1 contributor) / confirmed (2+) /
+-- canonical (3+ · conf >= .85). Thresholds live in src/workers/disc_promotion.ts.
+SELECT tier, COUNT(*) AS n FROM disc_canonical GROUP BY tier;
+
+-- [22] mean-confidence distribution across disc_canonical, as 0.05-wide histogram
+-- buckets. bucket = floor(mean_confidence * 20), clamped to 19 so a perfect 1.0
+-- folds into the top [0.95, 1.00] bin instead of spilling into a 21st bucket.
+-- Promotion requires mean_confidence >= 0.70, so buckets start at 14 in practice.
+SELECT MIN(19, CAST(mean_confidence * 20 AS INTEGER)) AS bucket, COUNT(*) AS n
+FROM disc_canonical
+GROUP BY bucket
+ORDER BY bucket;
+
+-- [23] top contributed shows by disc count — distinct discs and raw contributions
+-- per show, plus distinct contributors. tmdb_id reuses the dashboard's TMDB
+-- name lookup (same as the episode TOP SHOWS panel).
+SELECT
+  tmdb_id,
+  COUNT(DISTINCT disc_content_hash) AS discs,
+  COUNT(*) AS contributions,
+  COUNT(DISTINCT pseudonym) AS contributors
+FROM disc_contribution
+GROUP BY tmdb_id
+ORDER BY discs DESC, contributions DESC
+LIMIT 20;

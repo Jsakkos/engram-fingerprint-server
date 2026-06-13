@@ -152,10 +152,21 @@ function render(d) {
   renderContributors(d.topContributors);
   renderIngress(d.ingressHosts);
   renderFeed(d.recent, d.names);
+  renderDiscFunnel(d.disc);
+  renderDiscConfidence(d.disc.confidenceDist);
+  renderDiscShows(d.disc.topShows, d.names);
 }
 
 function renderEmptyAll() {
-  for (const id of ["funnel", "growthChart", "tierLadder", "sourceBars", "poison"]) {
+  for (const id of [
+    "funnel",
+    "growthChart",
+    "tierLadder",
+    "sourceBars",
+    "poison",
+    "discFunnel",
+    "discConfidence",
+  ]) {
     $(id).innerHTML = '<div class="empty-state">awaiting signal…</div>';
   }
 }
@@ -574,6 +585,140 @@ function renderFeed(recent, names) {
       );
     })
     .join("");
+}
+
+// ---- disc-hash recognition --------------------------------------------------
+
+// Disc promotion funnel: raw intake -> candidate -> confirmed -> canonical,
+// mirroring the episode PROMOTION CHAIN. Conversions read against the count of
+// promoted discs (the three tiers sum to the rows in disc_canonical), so each
+// badge shows that tier's share of the promoted disc catalog. Tones reuse the
+// shared tier colour language (cyan intake -> grey -> amber -> green).
+function renderDiscFunnel(disc) {
+  const t = disc.totals;
+  const tiers = disc.tiers;
+  const promoted = tiers.candidate + tiers.confirmed + tiers.canonical;
+  const denom = Math.max(1, promoted);
+  const maxTier = Math.max(1, tiers.candidate, tiers.confirmed, tiers.canonical);
+  const stages = [
+    {
+      tone: "raw",
+      kicker: "Raw intake",
+      val: t.contributions,
+      label: "Contributions",
+      sub: `${fmtNum(t.uniqueDiscs)} unique discs`,
+      w: 100,
+      conv: null,
+    },
+    {
+      tone: "candidate",
+      kicker: "Tier 1",
+      val: tiers.candidate,
+      label: "Candidate",
+      sub: "1 contributor",
+      w: (tiers.candidate / maxTier) * 100,
+      conv: fmtPct(tiers.candidate / denom),
+    },
+    {
+      tone: "confirmed",
+      kicker: "Tier 2",
+      val: tiers.confirmed,
+      label: "Confirmed",
+      sub: "2+ independent",
+      w: (tiers.confirmed / maxTier) * 100,
+      conv: fmtPct(tiers.confirmed / denom),
+    },
+    {
+      tone: "canonical",
+      kicker: "Tier 3",
+      val: tiers.canonical,
+      label: "Canonical",
+      sub: "3+ · conf ≥ .85",
+      w: (tiers.canonical / maxTier) * 100,
+      conv: fmtPct(tiers.canonical / denom),
+    },
+  ];
+  const wrap = $("discFunnel");
+  const nodes = stages.map((s, idx) => {
+    const node = el(
+      "div",
+      "fstage",
+      (s.conv ? `<span class="fconv">${s.conv}</span>` : "") +
+        `<div class="fkicker">${s.kicker}</div>` +
+        `<div class="fval" data-key="df${idx}">0</div>` +
+        `<div class="flabel">${s.label}</div>` +
+        `<div class="fsub">${s.sub}</div>` +
+        `<div class="fbar"><i data-w="${s.w.toFixed(1)}"></i></div>`,
+    );
+    node.dataset.tone = s.tone;
+    countUp(node.querySelector(`[data-key="df${idx}"]`), s.val);
+    return node;
+  });
+  wrap.replaceChildren(...nodes);
+  $("discHeroSub").textContent = promoted
+    ? `${fmtNum(promoted)} promoted · ${fmtPct(tiers.canonical / denom)} canonical`
+    : "disc-hash consensus";
+  animateBars(wrap);
+}
+
+// Mean-confidence histogram across disc_canonical. The transform hands back only
+// the buckets that have rows; render the contiguous span between the lowest and
+// highest so interior gaps read as zero-height bars rather than vanishing.
+function renderDiscConfidence(dist) {
+  const host = $("discConfidence");
+  if (!dist.length) {
+    host.replaceChildren(el("div", "empty-state", "no promoted discs yet"));
+    return;
+  }
+  const byBucket = new Map(dist.map((r) => [r.bucket, r.n]));
+  const lo = Math.min(...dist.map((r) => r.bucket));
+  const hi = Math.max(...dist.map((r) => r.bucket));
+  const max = Math.max(1, ...dist.map((r) => r.n));
+  const nodes = [];
+  for (let b = lo; b <= hi; b++) {
+    const n = byBucket.get(b) || 0;
+    const label = `${(b * 0.05).toFixed(2)}–${((b + 1) * 0.05).toFixed(2)}`;
+    nodes.push(
+      el(
+        "div",
+        "brow",
+        `<div class="brow-head"><b>${label}</b><span class="brow-n">${fmtNum(n)}</span></div>` +
+          `<div class="brow-track"><i data-w="${((n / max) * 100).toFixed(1)}"></i></div>`,
+      ),
+    );
+  }
+  host.replaceChildren(...nodes);
+  animateBars(host);
+}
+
+// Top contributed shows by disc count. Reuses showCell so disc shows pick up the
+// same TMDB name resolution as the episode TOP SHOWS table.
+function renderDiscShows(shows, names) {
+  const host = $("discShowsTable");
+  if (!shows.length) {
+    host.replaceChildren(el("div", "empty-state", "no disc contributions yet"));
+    return;
+  }
+  const rows = shows
+    .map(
+      (s) =>
+        "<tr>" +
+        showCell(s.tmdb_id, names) +
+        `<td class="num">${fmtNum(s.discs)}</td>` +
+        `<td class="num">${fmtNum(s.contributions)}</td>` +
+        `<td class="num">${fmtNum(s.contributors)}</td>` +
+        "</tr>",
+    )
+    .join("");
+  host.replaceChildren(
+    el(
+      "table",
+      null,
+      "<thead><tr>" +
+        '<th>Show</th><th class="num">Discs</th><th class="num">Contrib</th><th class="num">People</th>' +
+        `</tr></thead><tbody>${rows}</tbody>`,
+    ),
+  );
 }
 
 // ---- catalog browser --------------------------------------------------------

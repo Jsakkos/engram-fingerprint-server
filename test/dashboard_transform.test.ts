@@ -63,6 +63,27 @@ const SETS: unknown[][] = [
   ], // [16] recentContributions
 ];
 
+// A disc-recognition payload occupies positions [19]-[23] (migration 003). The
+// episode positions [0]-[18] still resolve as before; pad the fixture out to the
+// full length so shapePayload reads the disc sets by their QUERY_MAP index.
+const DISC_SETS: unknown[][] = [
+  ...SETS, // [0]-[16]
+  [], // [17] ingressContributionsByHost
+  [], // [18] ingressContributorsByHost
+  [{ n: 42 }], // [19] discTotalContributions
+  [{ n: 17 }], // [20] discUniqueDiscs
+  [
+    { tier: "candidate", n: 5 },
+    { tier: "confirmed", n: 3 },
+    { tier: "canonical", n: 2 },
+  ], // [21] discTierBreakdown
+  [
+    { bucket: 14, n: 4 },
+    { bucket: 19, n: 6 },
+  ], // [22] discConfidenceDist
+  [{ tmdb_id: 1399, discs: 4, contributions: 9, contributors: 3 }], // [23] discTopShows
+];
+
 describe("dashboard transform", () => {
   it("shapes a full 17-set wrangler payload into named totals", () => {
     const sets = parseWranglerJson(wrangler(SETS));
@@ -84,6 +105,31 @@ describe("dashboard transform", () => {
     expect(d.topShows[0].tmdb_id).toBe(1399);
     expect(d.recent).toHaveLength(1);
     expect(d.timeseries.contributions).toEqual([{ day: "2026-05-30", n: 201 }]);
+  });
+
+  it("shapes the disc-recognition sets into a disc payload", () => {
+    const sets = parseWranglerJson(wrangler(DISC_SETS)) as unknown[][];
+    const d = shapePayload(sets);
+    expect(d.disc.totals).toEqual({ contributions: 42, uniqueDiscs: 17 });
+    expect(d.disc.tiers).toEqual({ candidate: 5, confirmed: 3, canonical: 2 });
+    expect(d.disc.confidenceDist).toEqual([
+      { bucket: 14, n: 4 },
+      { bucket: 19, n: 6 },
+    ]);
+    expect(d.disc.topShows).toEqual([
+      { tmdb_id: 1399, discs: 4, contributions: 9, contributors: 3 },
+    ]);
+  });
+
+  it("defaults the disc payload to an empty/zeroed shape when its sets are absent", () => {
+    // The episode-only fixture has no disc positions, so every disc field must
+    // fall back without throwing (graceful zero-data degradation).
+    const sets = parseWranglerJson(wrangler(SETS)) as unknown[][];
+    const d = shapePayload(sets);
+    expect(d.disc.totals).toEqual({ contributions: 0, uniqueDiscs: 0 });
+    expect(d.disc.tiers).toEqual({ candidate: 0, confirmed: 0, canonical: 0 });
+    expect(d.disc.confidenceDist).toEqual([]);
+    expect(d.disc.topShows).toEqual([]);
   });
 
   it("splits the catalog-growth series by tier, defaulting empty tiers to []", () => {
@@ -193,6 +239,15 @@ describe("distinctShowIds", () => {
   it("ignores falsy/zero ids", () => {
     const data = { topShows: [{ tmdb_id: 0 }, { tmdb_id: 42 }], recent: [{}] };
     expect(distinctShowIds(data)).toEqual([42]);
+  });
+
+  it("folds disc top-show ids into the union so their names resolve too", () => {
+    const data = {
+      topShows: [{ tmdb_id: 1399 }],
+      recent: [{ tmdb_id: 12 }],
+      disc: { topShows: [{ tmdb_id: 777 }, { tmdb_id: 12 }] },
+    };
+    expect(distinctShowIds(data)).toEqual([12, 777, 1399]);
   });
 });
 

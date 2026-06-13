@@ -163,6 +163,34 @@
             <div class="empty-state">pick a show, or switch to BY&nbsp;TIER…</div>
           </div>
         </section>
+
+        <!-- disc-hash recognition: a parallel promotion pipeline keyed by a disc's
+             stable content hash (migration 003) -->
+        <section class="panel span-3" id="discHeroPanel">
+          <div class="panel-head">
+            <span class="panel-label">DISC RECOGNITION</span>
+            <span class="panel-sub" id="discHeroSub">disc-hash consensus</span>
+          </div>
+          <div class="funnel" id="discFunnel"></div>
+        </section>
+
+        <!-- disc mean-confidence distribution -->
+        <section class="panel" id="discConfidencePanel">
+          <div class="panel-head">
+            <span class="panel-label">DISC CONFIDENCE</span>
+            <span class="panel-sub">mean · promoted discs</span>
+          </div>
+          <div class="barlist" id="discConfidence"></div>
+        </section>
+
+        <!-- top contributed shows by disc count -->
+        <section class="panel span-2" id="discShowsPanel">
+          <div class="panel-head">
+            <span class="panel-label">DISC SHOWS</span>
+            <span class="panel-sub">by contributed discs</span>
+          </div>
+          <div class="table-wrap" id="discShowsTable"></div>
+        </section>
       </div>
     </main>
 

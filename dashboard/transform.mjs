@@ -27,6 +27,11 @@ export const QUERY_MAP = [
   "recentContributions", // [16]
   "ingressContributionsByHost", // [17]
   "ingressContributorsByHost", // [18]
+  "discTotalContributions", // [19]
+  "discUniqueDiscs", // [20]
+  "discTierBreakdown", // [21]
+  "discConfidenceDist", // [22]
+  "discTopShows", // [23]
 ];
 
 export function parseWranglerJson(stdout) {
@@ -152,6 +157,7 @@ export function shapePayload(sets) {
   const get = (name) => sets[QUERY_MAP.indexOf(name)] ?? [];
 
   const tiers = groupToMap(get("tierBreakdown"), "tier");
+  const discTiers = groupToMap(get("discTierBreakdown"), "tier");
   const overlap = get("overlapStats")[0] ?? {};
 
   return {
@@ -216,6 +222,31 @@ export function shapePayload(sets) {
       get("ingressContributionsByHost"),
       get("ingressContributorsByHost"),
     ),
+    // Disc-hash recognition (migration 003). Mirrors the episode shape above:
+    // raw-intake totals, a per-tier promoted breakdown, a mean-confidence
+    // histogram, and a top-shows-by-disc table. Every field defaults to empty/zero
+    // so a catalog with no disc data yet degrades gracefully.
+    disc: {
+      totals: {
+        contributions: scalar(get("discTotalContributions")),
+        uniqueDiscs: scalar(get("discUniqueDiscs")),
+      },
+      tiers: {
+        candidate: num(discTiers.candidate),
+        confirmed: num(discTiers.confirmed),
+        canonical: num(discTiers.canonical),
+      },
+      confidenceDist: (get("discConfidenceDist") ?? []).map((r) => ({
+        bucket: num(r.bucket),
+        n: num(r.n),
+      })),
+      topShows: (get("discTopShows") ?? []).map((r) => ({
+        tmdb_id: num(r.tmdb_id),
+        discs: num(r.discs),
+        contributions: num(r.contributions),
+        contributors: num(r.contributors),
+      })),
+    },
   };
 }
 
@@ -290,5 +321,6 @@ export function distinctShowIds(data) {
   const ids = new Set();
   for (const s of data?.topShows ?? []) if (s?.tmdb_id) ids.add(s.tmdb_id);
   for (const r of data?.recent ?? []) if (r?.tmdb_id) ids.add(r.tmdb_id);
+  for (const s of data?.disc?.topShows ?? []) if (s?.tmdb_id) ids.add(s.tmdb_id);
   return [...ids].sort((a, b) => a - b);
 }
