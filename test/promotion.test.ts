@@ -125,4 +125,33 @@ describe("PromotionWorker", () => {
     ).first<{ promoted_at: number | null }>();
     expect(row?.promoted_at).not.toBeNull();
   });
+
+  it("excludes network_disc contributions from promotion (anti-feedback)", async () => {
+    // A high-confidence, passing contribution whose ONLY source is network_disc —
+    // an episode the client auto-stamped from a network disc mapping. It must NOT
+    // self-confirm into the canonical set.
+    const encoded = await encodeZstdVarint([1, 2, 3]);
+    await env.DB.prepare(
+      `INSERT INTO contribution
+         (pseudonym, tmdb_id, season, episode, fingerprint, fingerprint_sha256,
+          disc_content_hash, match_confidence, match_source, client_version, poison_check)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'network_disc', 'engram/0.9.2', 'pass')`,
+    )
+      .bind(
+        "aa666666-6666-4666-8666-666666666666",
+        66666,
+        1,
+        1,
+        encoded,
+        new Uint8Array([0, 0]),
+        new Uint8Array([1]),
+        0.95,
+      )
+      .run();
+    await runPromotion(env);
+    const canonical = await env.DB.prepare(
+      `SELECT tier FROM episode_canonical WHERE tmdb_id = 66666`,
+    ).first<{ tier: string }>();
+    expect(canonical).toBeNull();
+  });
 });

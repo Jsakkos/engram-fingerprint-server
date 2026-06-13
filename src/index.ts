@@ -6,6 +6,7 @@ import { handleForget } from "./routes/forget";
 import { handleIdentify } from "./routes/identify";
 import { handleIdentifyDisc } from "./routes/identify_disc";
 import { handlePack } from "./routes/pack";
+import { runDiscPromotion } from "./workers/disc_promotion";
 import { runPackBuilder, runSketchBuilder } from "./workers/pack_builder";
 import { runPromotion } from "./workers/promotion";
 
@@ -18,7 +19,10 @@ export default {
   },
 
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    if (controller.cron === "0 3 * * *") ctx.waitUntil(runPromotion(env));
+    if (controller.cron === "0 3 * * *") {
+      ctx.waitUntil(runPromotion(env));
+      ctx.waitUntil(runDiscPromotion(env));
+    }
     if (controller.cron === "0 4 * * *") ctx.waitUntil(runPackBuilder(env));
     // Hourly sketch sweep: ~63 sketches/run within the 30s budget keeps identify
     // coverage ahead of intake without coupling to the daily promotion/pack crons.
