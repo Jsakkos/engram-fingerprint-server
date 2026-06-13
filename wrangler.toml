@@ -70,8 +70,9 @@ type = "CompiledWasm"
 globs = ["**/*.wasm"]
 fallthrough = true
 
-# 0 3 * * * — promotion (consensus build);  0 4 * * * — pack builder (R2 packs);
+# 30 * * * * — episode promotion (hourly, oldest-first, bounded by PROMOTION_BATCH_LIMIT);
+# 0 3 * * * — disc promotion;  0 4 * * * — pack builder (R2 packs);
 # 0 * * * * — hourly minhash sketch sweep (runSketchBuilder), decoupled so identify
 # coverage keeps pace with intake (~63 sketches/run × 24 ≈ 1,512/day) within the 30s budget.
 [triggers]
-crons = ["0 3 * * *", "0 4 * * *", "0 * * * *"]
+crons = ["0 3 * * *", "0 4 * * *", "0 * * * *", "30 * * * *"]

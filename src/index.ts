@@ -19,10 +19,11 @@ export default {
   },
 
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    if (controller.cron === "0 3 * * *") {
-      ctx.waitUntil(runPromotion(env));
-      ctx.waitUntil(runDiscPromotion(env));
-    }
+    // Episode promotion runs hourly at :30 on its own cron, bounded by
+    // PROMOTION_BATCH_LIMIT, so it keeps pace with intake without sharing a CPU
+    // budget with disc promotion or the (CPU-heavy) sketch builder at :00.
+    if (controller.cron === "30 * * * *") ctx.waitUntil(runPromotion(env));
+    if (controller.cron === "0 3 * * *") ctx.waitUntil(runDiscPromotion(env));
     if (controller.cron === "0 4 * * *") ctx.waitUntil(runPackBuilder(env));
     // Hourly sketch sweep: ~63 sketches/run within the 30s budget keeps identify
     // coverage ahead of intake without coupling to the daily promotion/pack crons.
