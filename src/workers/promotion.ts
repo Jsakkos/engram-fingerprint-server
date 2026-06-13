@@ -42,9 +42,12 @@ async function promoteOne(
   season: number | null,
   episode: number | null,
 ): Promise<void> {
-  // Pull contributions; group by pseudonym, keep most recent per pseudonym.
+  // Pull contributions; keep the most recent per pseudonym. The LEFT JOIN folds
+  // each contributor's flagged status into this single read, so no separate
+  // flagged-contributor query is needed.
   const contribs = await env.DB.prepare(
-    `SELECT c.id, c.pseudonym, c.disc_content_hash, c.match_confidence, c.fingerprint, c.received_at
+    `SELECT c.id, c.pseudonym, c.disc_content_hash, c.match_confidence, c.fingerprint, c.received_at,
+            COALESCE(ctr.flagged, 0) AS flagged
      FROM contribution c
      INNER JOIN (
        SELECT pseudonym, MAX(received_at) AS max_rcv
@@ -54,6 +57,7 @@ async function promoteOne(
          AND match_source != 'network_disc'
        GROUP BY pseudonym
      ) latest ON c.pseudonym = latest.pseudonym AND c.received_at = latest.max_rcv
+     LEFT JOIN contributor ctr ON ctr.pseudonym = c.pseudonym
      WHERE c.tmdb_id = ? AND c.season IS ? AND c.episode IS ?
        AND c.promoted_at IS NULL AND c.poison_check = 'pass' AND c.match_confidence >= ${MIN_PROMOTION_CONFIDENCE}
        AND c.match_source != 'network_disc'`,
@@ -66,36 +70,26 @@ async function promoteOne(
       match_confidence: number;
       fingerprint: ArrayBuffer;
       received_at: number;
+      flagged: number;
     }>();
 
   if (contribs.results.length === 0) return;
 
-  // Count distinct (pseudonym, disc_content_hash) pairs
+  // Count distinct (pseudonym, disc_content_hash) pairs; detect any flagged contributor.
   const distinctPairs = new Set<string>();
-  const flaggedPseudonyms = new Set<string>();
   let confSum = 0;
+  let anyFlagged = false;
   for (const c of contribs.results) {
     const discKey = c.disc_content_hash
       ? Array.from(new Uint8Array(c.disc_content_hash)).join(",")
       : "null";
     distinctPairs.add(`${c.pseudonym}|${discKey}`);
     confSum += c.match_confidence;
-  }
-
-  // Check if any contributor is flagged
-  const psnList = [...new Set(contribs.results.map((c) => c.pseudonym))];
-  if (psnList.length > 0) {
-    const flagged = await env.DB.prepare(
-      `SELECT pseudonym FROM contributor WHERE flagged = 1 AND pseudonym IN (${psnList.map(() => "?").join(",")})`,
-    )
-      .bind(...psnList)
-      .all<{ pseudonym: string }>();
-    for (const f of flagged.results) flaggedPseudonyms.add(f.pseudonym);
+    if (c.flagged) anyFlagged = true;
   }
 
   const independentCount = distinctPairs.size;
   const meanConfidence = confSum / contribs.results.length;
-  const anyFlagged = flaggedPseudonyms.size > 0;
 
   let tier: "candidate" | "confirmed" | "canonical";
   if (independentCount >= 3 && meanConfidence >= 0.85 && !anyFlagged) {
@@ -121,25 +115,23 @@ async function promoteOne(
 
   const consensusBlob = await encodeZstdVarint(consensusHashes);
 
-  // Upsert canonical
-  await env.DB.prepare(
-    `INSERT INTO episode_canonical (tmdb_id, season, episode, tier, fingerprint, unique_contributors, mean_confidence, promoted_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, unixepoch())
-     ON CONFLICT (tmdb_id, season, episode) DO UPDATE SET
-       tier = excluded.tier,
-       fingerprint = excluded.fingerprint,
-       unique_contributors = excluded.unique_contributors,
-       mean_confidence = excluded.mean_confidence,
-       promoted_at = excluded.promoted_at`,
-  )
-    .bind(tmdb_id, season, episode, tier, consensusBlob, independentCount, meanConfidence)
-    .run();
-
-  // Mark contributions promoted
+  // Upsert canonical + mark contributions promoted in one atomic batch: a single
+  // D1 round-trip instead of two, and no partial state where the canonical row
+  // exists but its contributions are still unpromoted (or vice-versa).
   const ids = contribs.results.map((c) => c.id);
-  await env.DB.prepare(
-    `UPDATE contribution SET promoted_at = unixepoch() WHERE id IN (${ids.map(() => "?").join(",")})`,
-  )
-    .bind(...ids)
-    .run();
+  await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO episode_canonical (tmdb_id, season, episode, tier, fingerprint, unique_contributors, mean_confidence, promoted_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, unixepoch())
+       ON CONFLICT (tmdb_id, season, episode) DO UPDATE SET
+         tier = excluded.tier,
+         fingerprint = excluded.fingerprint,
+         unique_contributors = excluded.unique_contributors,
+         mean_confidence = excluded.mean_confidence,
+         promoted_at = excluded.promoted_at`,
+    ).bind(tmdb_id, season, episode, tier, consensusBlob, independentCount, meanConfidence),
+    env.DB.prepare(
+      `UPDATE contribution SET promoted_at = unixepoch() WHERE id IN (${ids.map(() => "?").join(",")})`,
+    ).bind(...ids),
+  ]);
 }

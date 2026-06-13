@@ -207,4 +207,51 @@ describe("PromotionWorker", () => {
     expect(middle?.tier).toBe("candidate");
     expect(newest).toBeNull(); // deferred — over the limit
   });
+
+  it("does not reach CANONICAL when a contributor is flagged", async () => {
+    // 3 distinct contributors at high confidence would normally be canonical, but
+    // one pseudonym is flagged → must cap at confirmed.
+    const flagged = "ac999999-9999-4999-8999-999999999999";
+    await env.DB.prepare(
+      `INSERT INTO contributor (pseudonym, first_seen, last_seen, flagged)
+       VALUES (?, unixepoch(), unixepoch(), 1)`,
+    )
+      .bind(flagged)
+      .run();
+
+    await seedContribution({
+      pseudonym: flagged,
+      tmdb_id: 72001,
+      season: 1,
+      episode: 1,
+      hashes: [1, 2, 3],
+      confidence: 0.9,
+      discHash: new Uint8Array([1]),
+    });
+    await seedContribution({
+      pseudonym: "ac888888-8888-4888-8888-888888888888",
+      tmdb_id: 72001,
+      season: 1,
+      episode: 1,
+      hashes: [1, 2, 3],
+      confidence: 0.9,
+      discHash: new Uint8Array([2]),
+    });
+    await seedContribution({
+      pseudonym: "ac777777-7777-4777-8777-777777777777",
+      tmdb_id: 72001,
+      season: 1,
+      episode: 1,
+      hashes: [1, 2, 3],
+      confidence: 0.9,
+      discHash: new Uint8Array([3]),
+    });
+
+    await runPromotion(env);
+
+    const canonical = await env.DB.prepare(
+      `SELECT tier FROM episode_canonical WHERE tmdb_id = 72001 AND season = 1 AND episode = 1`,
+    ).first<{ tier: string }>();
+    expect(canonical?.tier).toBe("confirmed"); // 3 contributors but one flagged
+  });
 });
