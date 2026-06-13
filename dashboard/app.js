@@ -166,6 +166,7 @@ function renderEmptyAll() {
     "poison",
     "discFunnel",
     "discConfidence",
+    "discShowsTable",
   ]) {
     $(id).innerHTML = '<div class="empty-state">awaiting signal…</div>';
   }
