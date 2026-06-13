@@ -96,6 +96,9 @@ async function promoteOneDisc(env: Env, discHash: Uint8Array): Promise<void> {
   // 3 + 4. Parse, compute per-contribution stats, apply eligibility filter.
   const eligible: EligibleContribution[] = [];
   for (const c of contribs.results) {
+    // Disc promotion excludes a flagged contributor's contributions ENTIRELY (stricter
+    // than episode promotion, which only bars them from the canonical tier) — intentional,
+    // since a flagged contributor's disc mapping shouldn't seed the catalog at all.
     if (flagged.has(c.pseudonym)) continue;
 
     let titles: Array<{ match_confidence: number; match_source: string }>;

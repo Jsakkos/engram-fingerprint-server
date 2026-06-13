@@ -124,6 +124,24 @@ describe("GET /v1/identify-disc", () => {
     expect(json.disc.titles_json).toBeUndefined();
   });
 
+  it("returns 200 {disc: null} when the stored titles_json is corrupt (guarded parse)", async () => {
+    const hash = new Uint8Array([
+      0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x11, 0x22, 9, 9, 9, 9, 9, 9, 9, 9,
+    ]);
+    // Malformed JSON in the column must be contained, not 500 the handler.
+    await seedDiscCanonical(hash, {
+      tmdbId: 555,
+      contentType: "tv",
+      season: 1,
+      titlesJson: "{not json",
+    });
+
+    const res = await SELF.fetch(`https://x.com/v1/identify-disc?hash=${b64url(hash)}`);
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { disc: unknown };
+    expect(json.disc).toBeNull();
+  });
+
   it("treats an empty hash param as missing (400)", async () => {
     // An empty param string is falsy, so it's caught by the missing-hash guard
     // before decoding (which would otherwise yield zero bytes -> {disc:null}).

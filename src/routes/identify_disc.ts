@@ -22,6 +22,15 @@ export async function handleIdentifyDisc(request: Request, env: Env): Promise<Re
   const row = await getDiscCanonical(env.DB, hashBytes);
   if (!row) return Response.json({ disc: null }, { status: 200 });
 
+  // A corrupt titles_json must not 500 the lookup. Contain the parse failure and fall
+  // back to the miss contract ({disc:null}, 200) rather than throwing.
+  let titles: unknown;
+  try {
+    titles = JSON.parse(row.titles_json);
+  } catch {
+    return Response.json({ disc: null }, { status: 200 });
+  }
+
   return Response.json(
     {
       disc: {
@@ -31,7 +40,7 @@ export async function handleIdentifyDisc(request: Request, env: Env): Promise<Re
         tier: row.tier,
         unique_contributors: row.unique_contributors,
         mean_confidence: row.mean_confidence,
-        titles: JSON.parse(row.titles_json),
+        titles,
       },
     },
     { status: 200 },

@@ -32,21 +32,41 @@ export const ContributionResponseSchema = z.object({
 
 export const DiscTitleAssignment = z.enum(["episode", "main_movie", "extra", "discarded"]);
 
-export const DiscTitleRowSchema = z.object({
-  title_index: z.number().int().min(0),
-  duration_seconds: z.number().int().min(0),
-  size_bytes: z.number().int().min(0),
-  assignment: DiscTitleAssignment,
-  season: z.number().int().min(0).nullable(),
-  episode: z.number().int().min(0).nullable(),
-  match_confidence: z.number().min(0).max(1),
-  match_source: z.enum(MATCH_SOURCE_ALLOWLIST),
-});
+export const DiscTitleRowSchema = z
+  .object({
+    title_index: z.number().int().min(0),
+    duration_seconds: z.number().int().min(0),
+    size_bytes: z.number().int().min(0),
+    assignment: DiscTitleAssignment,
+    season: z.number().int().min(0).nullable(),
+    episode: z.number().int().min(0).nullable(),
+    match_confidence: z.number().min(0).max(1),
+    match_source: z.enum(MATCH_SOURCE_ALLOWLIST),
+  })
+  // Cross-field consistency so malformed assignments can't pollute consensus.
+  // (extra/discarded rows leave season/episode unconstrained.)
+  .superRefine((row, ctx) => {
+    if (row.assignment === "episode" && (row.season === null || row.episode === null)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "episode titles require non-null season and episode",
+        path: ["episode"],
+      });
+    }
+    if (row.assignment === "main_movie" && (row.season !== null || row.episode !== null)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "main_movie titles must have null season and episode",
+        path: ["episode"],
+      });
+    }
+  });
 
 export const ContributeDiscRequestSchema = z.object({
   wire_format_version: z.literal(1),
   pseudonym: UUIDv4,
-  disc_content_hash_b64: Base64, // REQUIRED (not nullable) for disc records
+  // 16-byte MD5 → 24 b64 chars; bound rules out empty/garbage
+  disc_content_hash_b64: Base64.min(22).max(44), // REQUIRED (not nullable) for disc records
   tmdb_id: z.number().int().positive(),
   content_type: z.enum(["tv", "movie"]),
   season: z.number().int().min(0).nullable(),

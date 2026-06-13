@@ -20,21 +20,14 @@ export async function insertDiscContribution(
   // Dedupe on the same three columns as idx_disc_contribution_dedupe. The digest is
   // identity-only, so a re-upload of the same layout collapses while a corrected
   // assignment (different digest) is fresh evidence and inserts anew.
-  const existing = await db
-    .prepare(
-      `SELECT id FROM disc_contribution
-       WHERE pseudonym = ? AND disc_content_hash = ? AND titles_digest = ?`,
-    )
-    .bind(fields.pseudonym, fields.discContentHash, fields.titlesDigest)
-    .first<{ id: number }>();
-
-  if (existing) {
-    return { contributionId: existing.id, isDuplicate: true };
-  }
-
+  //
+  // INSERT OR IGNORE atomically resolves the concurrent-duplicate race: two identical
+  // requests can both clear a SELECT-then-INSERT and race the INSERT, with the loser
+  // throwing a UNIQUE-constraint 500. With OR IGNORE the unique index absorbs the loser
+  // (changes === 0) and we resolve to the original row instead of erroring.
   const result = await db
     .prepare(
-      `INSERT INTO disc_contribution
+      `INSERT OR IGNORE INTO disc_contribution
          (pseudonym, disc_content_hash, tmdb_id, content_type, season,
           titles_json, titles_digest, client_version, ingress_host)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -52,11 +45,24 @@ export async function insertDiscContribution(
     )
     .run();
 
+  if (result.meta.changes === 0) {
+    // The insert was ignored: an identical contribution already exists. Resolve its id.
+    const existing = await db
+      .prepare(
+        `SELECT id FROM disc_contribution
+         WHERE pseudonym = ? AND disc_content_hash = ? AND titles_digest = ?`,
+      )
+      .bind(fields.pseudonym, fields.discContentHash, fields.titlesDigest)
+      .first<{ id: number }>();
+    return { contributionId: existing?.id ?? 0, isDuplicate: true };
+  }
+
   const contributionId = result.meta.last_row_id;
 
   // Track disc-only contributors the same way episode contributions do, so the
   // flagged screen and /v1/forget (which deletes disc_contribution by pseudonym)
-  // stay uniform across both intake paths.
+  // stay uniform across both intake paths. Only on a real insert (changes > 0) so a
+  // deduped re-post doesn't double-count.
   await db
     .prepare(
       `INSERT INTO contributor (pseudonym, first_seen, last_seen, contribution_count, flagged, flag_count)

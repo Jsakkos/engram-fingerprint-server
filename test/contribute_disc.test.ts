@@ -191,6 +191,49 @@ describe("POST /v1/contribute-disc", () => {
     expect(row?.season).toBeNull();
   });
 
+  it("returns 400 on an empty disc_content_hash_b64", async () => {
+    expect((await post(validBody({ disc_content_hash_b64: "" }))).status).toBe(400);
+  });
+
+  it("returns 400 on an over-long disc_content_hash_b64 (>44 chars)", async () => {
+    // 48 base64 chars (32 bytes) exceeds the 16-byte MD5 ceiling of 44.
+    const tooLong = btoa(String.fromCharCode(...new Uint8Array(36)));
+    expect(tooLong.length).toBeGreaterThan(44);
+    expect((await post(validBody({ disc_content_hash_b64: tooLong }))).status).toBe(400);
+  });
+
+  it("returns 400 on an episode row with null season", async () => {
+    const body = validBody();
+    (body.titles as Array<Record<string, unknown>>)[0].season = null;
+    expect((await post(body)).status).toBe(400);
+  });
+
+  it("returns 400 on an episode row with null episode", async () => {
+    const body = validBody();
+    (body.titles as Array<Record<string, unknown>>)[0].episode = null;
+    expect((await post(body)).status).toBe(400);
+  });
+
+  it("returns 400 on a main_movie row carrying an episode number", async () => {
+    const body = validBody({
+      content_type: "movie",
+      season: null,
+      titles: [
+        {
+          title_index: 0,
+          duration_seconds: 7200,
+          size_bytes: 25_000_000_000,
+          assignment: "main_movie",
+          season: null,
+          episode: 3,
+          match_confidence: 0.99,
+          match_source: "engram_discdb",
+        },
+      ],
+    });
+    expect((await post(body)).status).toBe(400);
+  });
+
   it("silently drops a flagged contributor (200 duplicate, no row written)", async () => {
     const psn = "77777777-7777-4777-8777-777777777777";
     await env.DB.prepare(
