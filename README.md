@@ -41,9 +41,10 @@ Phase C (disc recognition) adds two more:
 
 - `POST /v1/contribute-disc` — accept a disc layout → identity mapping (a disc's
   content hash plus how each title maps to a show/episode set).
-- `GET /v1/identify-disc?hash=<b64url>` — look up a promoted disc by content hash
-  (base64url-encoded, mirroring `/v1/identify`'s `fp`). Returns `{ "disc": null }`
-  on a miss or `{ "disc": { … } }` for a disc that has been promoted to canonical.
+- `GET /v1/identify-disc?hash=<b64url>` — look up a disc that has been promoted
+  (tier `candidate`/`confirmed`/`canonical`) by its content hash (base64url-encoded,
+  mirroring `/v1/identify`'s `fp`). Returns `{ "disc": null }` on a miss or
+  `{ "disc": { … } }` (which exposes the promoted `tier`) on a hit.
 
 ## Schema
 

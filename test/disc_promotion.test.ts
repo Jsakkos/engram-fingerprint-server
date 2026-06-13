@@ -135,7 +135,7 @@ describe("DiscPromotionWorker", () => {
     expect(c).toBeNull();
   });
 
-  it("excludes all-network contributions (anti-feedback), but partial-network still counts", async () => {
+  it("excludes ANY network-stamped contribution (anti-feedback): all-network AND partial-network are dropped", async () => {
     // A) single all-network contribution at high conf → excluded → no row.
     const hashA = new Uint8Array([0x05, 0x0a]);
     await seedDiscContribution({
@@ -151,36 +151,54 @@ describe("DiscPromotionWorker", () => {
     await runDiscPromotion(env);
     expect(await getCanonical(hashA)).toBeNull();
 
-    // B) one all-network + two independent (asr) at same digest →
-    //    promotes to confirmed counting only the 2 independent ones.
+    // B) a single partial-network contribution (one network title, one asr title) is the
+    //    only contributor at a digest → excluded by the any-network rule → no row written.
     const hashB = new Uint8Array([0x05, 0x0b]);
     await seedDiscContribution({
-      pseudonym: "d5-net-b",
+      pseudonym: "d5-partial-b",
       discHash: hashB,
       tmdbId: 10006,
       titlesDigest: "digA",
+      // partial-network: one title network, one independent → tainted under the any-network rule.
       titles: [
-        { match_confidence: 0.95, match_source: "network_disc" },
+        { match_confidence: 0.95, match_source: "engram_asr" },
         { match_confidence: 0.95, match_source: "network_disc" },
       ],
     });
-    for (const p of ["d5-asr-1", "d5-asr-2"]) {
-      await seedDiscContribution({
-        pseudonym: p,
-        discHash: hashB,
-        tmdbId: 10006,
-        titlesDigest: "digA",
-        // partial-network: one title network, one independent → NOT allNetwork.
-        titles: [
-          { match_confidence: 0.9, match_source: "engram_asr" },
-          { match_confidence: 0.9, match_source: "network_disc" },
-        ],
-      });
-    }
     await runDiscPromotion(env);
-    const cB = await getCanonical(hashB);
-    expect(cB?.tier).toBe("confirmed");
-    expect(cB?.unique_contributors).toBe(2);
+    expect(await getCanonical(hashB)).toBeNull();
+
+    // C) one partial-network + one independent (all-asr) at the same digest →
+    //    only the independent contributor counts. The partial-network one adds NO vote,
+    //    so this lands at candidate with unique_contributors === 1 (not confirmed/2).
+    const hashC = new Uint8Array([0x05, 0x0c]);
+    await seedDiscContribution({
+      pseudonym: "d5-partial-c",
+      discHash: hashC,
+      tmdbId: 10007,
+      titlesDigest: "digA",
+      // partial-network: one network title taints the whole contribution.
+      titles: [
+        { match_confidence: 0.95, match_source: "engram_asr" },
+        { match_confidence: 0.95, match_source: "network_disc" },
+      ],
+    });
+    await seedDiscContribution({
+      pseudonym: "d5-asr-c",
+      discHash: hashC,
+      tmdbId: 10007,
+      titlesDigest: "digA",
+      // fully independent → the only contribution that counts.
+      titles: [
+        { match_confidence: 0.95, match_source: "engram_asr" },
+        { match_confidence: 0.95, match_source: "engram_asr" },
+      ],
+    });
+    await runDiscPromotion(env);
+    const cC = await getCanonical(hashC);
+    expect(cC?.tier).toBe("candidate");
+    // Proves the partial-network contribution did NOT add a vote.
+    expect(cC?.unique_contributors).toBe(1);
   });
 
   it("caps a contested disc: winner with 3 but runner-up with 2 -> confirmed, not canonical", async () => {

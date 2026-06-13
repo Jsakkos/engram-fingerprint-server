@@ -110,13 +110,18 @@ async function promoteOneDisc(env: Env, discHash: Uint8Array): Promise<void> {
       titles.length > 0
         ? titles.reduce((sum, t) => sum + t.match_confidence, 0) / titles.length
         : 0;
-    const allNetwork = titles.length > 0 && titles.every((t) => t.match_source === "network_disc");
+    const anyNetwork = titles.length > 0 && titles.some((t) => t.match_source === "network_disc");
 
     if (meanConf < MIN_PROMOTION_CONFIDENCE) continue;
-    // Anti-feedback: a client that auto-applied a network disc mapping is not an
-    // independent confirmation of that mapping. A partially-network disc (some titles
-    // independently matched) still counts.
-    if (allNetwork) continue;
+    // Anti-feedback: exclude a contribution from disc consensus if ANY of its titles was
+    // assigned from a network mapping (`match_source === "network_disc"`). `titles_digest`
+    // is source-blind (identity-only), so even a single network-stamped title would let a
+    // network-derived assignment confirm itself. The real client is all-or-nothing — it
+    // skips enqueue when every assignment is network-derived — so this only bites
+    // buggy/adversarial clients that emit a partial network/independent mix. (An empty
+    // titles array is not network-tainted by this rule, but it also fails the confidence
+    // check above, so it never reaches here as eligible.)
+    if (anyNetwork) continue;
 
     eligible.push({
       id: c.id,
