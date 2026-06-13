@@ -30,6 +30,35 @@ export const ContributionResponseSchema = z.object({
   overlap_pct: z.number().min(0).max(1),
 });
 
+export const DiscTitleAssignment = z.enum(["episode", "main_movie", "extra", "discarded"]);
+
+export const DiscTitleRowSchema = z.object({
+  title_index: z.number().int().min(0),
+  duration_seconds: z.number().int().min(0),
+  size_bytes: z.number().int().min(0),
+  assignment: DiscTitleAssignment,
+  season: z.number().int().min(0).nullable(),
+  episode: z.number().int().min(0).nullable(),
+  match_confidence: z.number().min(0).max(1),
+  match_source: z.enum(MATCH_SOURCE_ALLOWLIST),
+});
+
+export const ContributeDiscRequestSchema = z.object({
+  wire_format_version: z.literal(1),
+  pseudonym: UUIDv4,
+  disc_content_hash_b64: Base64, // REQUIRED (not nullable) for disc records
+  tmdb_id: z.number().int().positive(),
+  content_type: z.enum(["tv", "movie"]),
+  season: z.number().int().min(0).nullable(),
+  titles: z.array(DiscTitleRowSchema).min(1),
+  client_version: z.string().min(1).max(100),
+});
+
+export const ContributeDiscResponseSchema = z.object({
+  contribution_id: z.number().int(),
+  status: z.enum(["accepted", "duplicate"]),
+});
+
 export const ForgetRequestSchema = z.object({
   pseudonym: UUIDv4,
 });

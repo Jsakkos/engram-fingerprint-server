@@ -1,5 +1,6 @@
 import { withSunsetHeaders } from "./deprecation";
 import { type Env, handleContribute } from "./routes/contribute";
+import { handleContributeDisc } from "./routes/contribute_disc";
 import { handleDevSeed } from "./routes/dev_seed";
 import { handleForget } from "./routes/forget";
 import { handleIdentify } from "./routes/identify";
@@ -30,6 +31,12 @@ async function routeRequest(request: Request, env: Env, url: URL): Promise<Respo
       return new Response("Method Not Allowed", { status: 405 });
     }
     return handleContribute(request, env, url);
+  }
+  if (url.pathname === "/v1/contribute-disc") {
+    if (request.method !== "POST") {
+      return new Response("Method Not Allowed", { status: 405 });
+    }
+    return handleContributeDisc(request, env, url);
   }
   if (url.pathname === "/v1/forget") {
     if (request.method !== "POST") {
