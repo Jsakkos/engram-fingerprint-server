@@ -25,6 +25,7 @@ interface DiscContributionRow {
 }
 
 interface EligibleContribution {
+  id: number;
   pseudonym: string;
   tmdb_id: number;
   content_type: string;
@@ -39,8 +40,17 @@ interface DigestGroup {
   titles_digest: string;
   uniqueContributors: number;
   groupMeanConf: number;
-  // The latest contribution overall in the group — supplies the canonical record.
+  // The latest of the deduped per-pseudonym votes (by received_at, then id) — supplies
+  // the canonical record.
   representative: EligibleContribution;
+}
+
+// Total order on contributions: latest received_at wins; ties broken by the
+// AUTOINCREMENT id (strictly monotonic → unique winner). Without this, same-second
+// ties would depend on DB row order, which SQLite does not guarantee, making the
+// stored canonical payload nondeterministic across runs.
+function isLater(a: EligibleContribution, b: EligibleContribution): boolean {
+  return a.received_at > b.received_at || (a.received_at === b.received_at && a.id > b.id);
 }
 
 export async function runDiscPromotion(env: Env): Promise<void> {
@@ -62,7 +72,7 @@ async function promoteOneDisc(env: Env, discHash: Uint8Array): Promise<void> {
   // 1. Load ALL contributions for this hash (cumulative).
   const contribs = await env.DB.prepare(
     `SELECT id, pseudonym, tmdb_id, content_type, season, titles_json, titles_digest, received_at
-     FROM disc_contribution WHERE disc_content_hash = ?`,
+     FROM disc_contribution WHERE disc_content_hash = ? ORDER BY received_at, id`,
   )
     .bind(discHash)
     .all<DiscContributionRow>();
@@ -109,6 +119,7 @@ async function promoteOneDisc(env: Env, discHash: Uint8Array): Promise<void> {
     if (allNetwork) continue;
 
     eligible.push({
+      id: c.id,
       pseudonym: c.pseudonym,
       tmdb_id: c.tmdb_id,
       content_type: c.content_type,
@@ -146,6 +157,8 @@ async function promoteOneDisc(env: Env, discHash: Uint8Array): Promise<void> {
       discHash,
       representative.tmdb_id,
       representative.content_type,
+      // Top-level season is representative-derived (NOT part of titles_digest, so it is
+      // not consensus-validated); the per-title seasons inside titles_json are authoritative.
       representative.season,
       representative.titles_json,
       winner.titles_digest,
@@ -174,19 +187,19 @@ export function buildDigestGroups(eligible: EligibleContribution[]): DigestGroup
 
   const groups: DigestGroup[] = [];
   for (const [digest, members] of byDigest) {
-    // Latest contribution per pseudonym (max received_at; later row wins).
+    // Latest contribution per pseudonym (by received_at, then id; later row wins).
     const latestPerPseudonym = new Map<string, EligibleContribution>();
     for (const m of members) {
       const prev = latestPerPseudonym.get(m.pseudonym);
-      if (!prev || m.received_at > prev.received_at) latestPerPseudonym.set(m.pseudonym, m);
+      if (!prev || isLater(m, prev)) latestPerPseudonym.set(m.pseudonym, m);
     }
     const kept = [...latestPerPseudonym.values()];
     const uniqueContributors = kept.length;
     const groupMeanConf = kept.reduce((sum, k) => sum + k.meanConf, 0) / kept.length;
-    // Representative: latest contribution overall in the group (by received_at).
+    // Representative: latest of the deduped per-pseudonym votes (by received_at, then id).
     let representative = kept[0];
     for (const k of kept) {
-      if (k.received_at > representative.received_at) representative = k;
+      if (isLater(k, representative)) representative = k;
     }
 
     groups.push({ titles_digest: digest, uniqueContributors, groupMeanConf, representative });
