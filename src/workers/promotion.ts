@@ -115,9 +115,11 @@ async function promoteOne(
 
   const consensusBlob = await encodeZstdVarint(consensusHashes);
 
-  // Upsert canonical + mark contributions promoted in one atomic batch: a single
-  // D1 round-trip instead of two, and no partial state where the canonical row
-  // exists but its contributions are still unpromoted (or vice-versa).
+  // Upsert canonical + mark contributions promoted in one DB.batch(): a single
+  // D1 round-trip instead of two. D1 runs a batch as a single transaction —
+  // statements commit sequentially and the whole sequence rolls back if any one
+  // fails (see Cloudflare D1 worker-api docs) — so there is no partial state
+  // where the canonical row exists but its contributions are still unpromoted.
   const ids = contribs.results.map((c) => c.id);
   await env.DB.batch([
     env.DB.prepare(
