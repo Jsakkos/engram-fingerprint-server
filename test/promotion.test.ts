@@ -15,15 +15,17 @@ async function seedContribution(opts: {
   hashes: number[];
   confidence: number;
   discHash?: Uint8Array;
+  received_at?: number;
 }) {
   const encoded = await encodeZstdVarint(opts.hashes);
   await env.DB.prepare(
     `INSERT INTO contribution
-       (pseudonym, tmdb_id, season, episode, fingerprint, fingerprint_sha256,
+       (received_at, pseudonym, tmdb_id, season, episode, fingerprint, fingerprint_sha256,
         disc_content_hash, match_confidence, match_source, client_version, poison_check)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'engram_asr', 'engram/0.9.2', 'pass')`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'engram_asr', 'engram/0.9.2', 'pass')`,
   )
     .bind(
+      opts.received_at ?? Math.floor(Date.now() / 1000),
       opts.pseudonym,
       opts.tmdb_id,
       opts.season,
@@ -153,5 +155,139 @@ describe("PromotionWorker", () => {
       `SELECT tier FROM episode_canonical WHERE tmdb_id = 66666`,
     ).first<{ tier: string }>();
     expect(canonical).toBeNull();
+  });
+
+  it("promotes oldest-eligible groups first and stops at the limit", async () => {
+    // Three distinct episodes, ascending received_at. With limit=2 only the two
+    // oldest may promote; the newest must be deferred to a later run.
+    await seedContribution({
+      pseudonym: "ab111111-1111-4111-8111-111111111111",
+      tmdb_id: 71001,
+      season: 1,
+      episode: 1,
+      hashes: [1, 2, 3],
+      confidence: 0.9,
+      discHash: new Uint8Array([1]),
+      received_at: 1000,
+    });
+    await seedContribution({
+      pseudonym: "ab222222-2222-4222-8222-222222222222",
+      tmdb_id: 71002,
+      season: 1,
+      episode: 1,
+      hashes: [1, 2, 3],
+      confidence: 0.9,
+      discHash: new Uint8Array([1]),
+      received_at: 2000,
+    });
+    await seedContribution({
+      pseudonym: "ab333333-3333-4333-8333-333333333333",
+      tmdb_id: 71003,
+      season: 1,
+      episode: 1,
+      hashes: [1, 2, 3],
+      confidence: 0.9,
+      discHash: new Uint8Array([1]),
+      received_at: 3000,
+    });
+
+    await runPromotion(env, 2);
+
+    const oldest = await env.DB.prepare(
+      `SELECT tier FROM episode_canonical WHERE tmdb_id = 71001`,
+    ).first<{ tier: string }>();
+    const middle = await env.DB.prepare(
+      `SELECT tier FROM episode_canonical WHERE tmdb_id = 71002`,
+    ).first<{ tier: string }>();
+    const newest = await env.DB.prepare(
+      `SELECT tier FROM episode_canonical WHERE tmdb_id = 71003`,
+    ).first<{ tier: string }>();
+
+    expect(oldest?.tier).toBe("candidate");
+    expect(middle?.tier).toBe("candidate");
+    expect(newest).toBeNull(); // deferred — over the limit
+  });
+
+  it("does not reach CANONICAL when a contributor is flagged", async () => {
+    // 3 distinct contributors at high confidence would normally be canonical, but
+    // one pseudonym is flagged → must cap at confirmed.
+    const flagged = "ac999999-9999-4999-8999-999999999999";
+    await env.DB.prepare(
+      `INSERT INTO contributor (pseudonym, first_seen, last_seen, flagged)
+       VALUES (?, unixepoch(), unixepoch(), 1)`,
+    )
+      .bind(flagged)
+      .run();
+
+    await seedContribution({
+      pseudonym: flagged,
+      tmdb_id: 72001,
+      season: 1,
+      episode: 1,
+      hashes: [1, 2, 3],
+      confidence: 0.9,
+      discHash: new Uint8Array([1]),
+    });
+    await seedContribution({
+      pseudonym: "ac888888-8888-4888-8888-888888888888",
+      tmdb_id: 72001,
+      season: 1,
+      episode: 1,
+      hashes: [1, 2, 3],
+      confidence: 0.9,
+      discHash: new Uint8Array([2]),
+    });
+    await seedContribution({
+      pseudonym: "ac777777-7777-4777-8777-777777777777",
+      tmdb_id: 72001,
+      season: 1,
+      episode: 1,
+      hashes: [1, 2, 3],
+      confidence: 0.9,
+      discHash: new Uint8Array([3]),
+    });
+
+    await runPromotion(env);
+
+    const canonical = await env.DB.prepare(
+      `SELECT tier FROM episode_canonical WHERE tmdb_id = 72001 AND season = 1 AND episode = 1`,
+    ).first<{ tier: string }>();
+    expect(canonical?.tier).toBe("confirmed"); // 3 contributors but one flagged
+  });
+
+  it("promotes an episode with >100 distinct contributors (D1 100-param bind cap)", async () => {
+    // promoteOne marks contributions promoted with `UPDATE ... WHERE id IN (?, ?, …)`
+    // inside its DB.batch, binding one parameter per contributor. D1 caps bound
+    // parameters at 100 per statement, so an episode with >100 distinct contributors
+    // overflows the cap — the batch throws, rolls back (canonical upsert included),
+    // is swallowed by runPromotion's per-group try/catch, and the episode silently
+    // never promotes (its contributions stay unpromoted and it re-throws every run).
+    const N = 150;
+    for (let i = 0; i < N; i++) {
+      await seedContribution({
+        pseudonym: `bb${String(i).padStart(6, "0")}-0000-4000-8000-${String(i).padStart(12, "0")}`,
+        tmdb_id: 77777,
+        season: 1,
+        episode: 1,
+        hashes: [1, 2, 3],
+        confidence: 0.9,
+        discHash: new Uint8Array([i & 0xff, (i >> 8) & 0xff]),
+      });
+    }
+
+    await runPromotion(env);
+
+    // Every contribution for the episode must be marked promoted — none left behind.
+    const unpromoted = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM contribution WHERE tmdb_id = 77777 AND promoted_at IS NULL`,
+    ).first<{ n: number }>();
+    expect(unpromoted?.n).toBe(0);
+
+    // …and the episode must actually land in the canonical set with all contributors counted.
+    const canonical = await env.DB.prepare(
+      `SELECT unique_contributors FROM episode_canonical
+       WHERE tmdb_id = 77777 AND season = 1 AND episode = 1`,
+    ).first<{ unique_contributors: number }>();
+    expect(canonical?.unique_contributors).toBe(N);
   });
 });
