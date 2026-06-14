@@ -3,7 +3,6 @@ import { decompress } from "@bokuweb/zstd-wasm";
 import { beforeAll, describe, expect, it } from "vitest";
 import { encodeZstdVarint, initCodec } from "../src/codec";
 import { runPackBuilder, runSketchBuilder } from "../src/workers/pack_builder";
-import { runPromotion } from "../src/workers/promotion";
 
 beforeAll(async () => {
   await initCodec();
