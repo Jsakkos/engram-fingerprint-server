@@ -61,8 +61,8 @@ describe("PromotionWorker", () => {
     // reuses the submitted blob as-is instead of decode→sort-unique→re-encode (the
     // zstd decode/encode dominate per-group CPU). Hashes are deliberately unsorted:
     // the old consensus path reordered them to [1,2,3,4,5]; the fast-path preserves
-    // the submitted bytes. Safe because every consumer of episode_canonical.fingerprint
-    // set-ifies it (identify, pack_builder, sketch), so order/dupes don't matter.
+    // the submitted bytes. (Single-contributor episodes are `candidate` tier and are
+    // never packed, so this raw form never reaches a client — see promotion.ts.)
     const hashes = [5, 3, 1, 4, 2];
     await seedContribution({
       pseudonym: "ae111111-1111-4111-8111-111111111111",
@@ -76,7 +76,10 @@ describe("PromotionWorker", () => {
     const row = await env.DB.prepare(
       `SELECT fingerprint FROM episode_canonical WHERE tmdb_id = 81001 AND season = 1 AND episode = 1`,
     ).first<{ fingerprint: ArrayBuffer }>();
-    const decoded = await decodeZstdVarint(new Uint8Array(row?.fingerprint as ArrayBuffer));
+    const fingerprint = row?.fingerprint;
+    if (!fingerprint)
+      throw new Error("expected a promoted episode_canonical row for tmdb_id 81001");
+    const decoded = await decodeZstdVarint(new Uint8Array(fingerprint));
     expect(decoded).toEqual(hashes);
   });
 

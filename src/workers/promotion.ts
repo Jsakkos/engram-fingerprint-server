@@ -118,9 +118,15 @@ async function promoteOne(
   // Build the consensus fingerprint. A single-contributor group — the overwhelming
   // majority of the backlog — has a trivial consensus (the lone contributor's own
   // hashes), so reuse that contribution's stored blob verbatim instead of paying the
-  // zstd decode + re-encode that dominate per-group CPU. Safe because every consumer
-  // of episode_canonical.fingerprint set-ifies it (identify, pack_builder, sketch),
-  // so the blob's hash order and any duplicates are irrelevant downstream.
+  // zstd decode + re-encode that dominate per-group CPU.
+  //
+  // Storing this raw (possibly unsorted/duplicate) blob is safe: a single-contributor
+  // group is always `candidate` tier (independentCount = 1 below), and the only
+  // CLIENT-facing consumer — the R2 pack (buildPack) — embeds `canonical` tier only
+  // (>=3 contributors), which always comes from the multi-contributor consensus path
+  // below (sorted + de-duped). So a raw blob never leaves the server; the
+  // server-internal readers (identify, sketch, the pack's document-frequency) all
+  // set-ify, where order and duplicates are irrelevant.
   let consensusBlob: Uint8Array;
   if (contribs.results.length === 1) {
     consensusBlob = new Uint8Array(contribs.results[0].fingerprint);
