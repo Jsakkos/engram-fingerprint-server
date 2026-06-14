@@ -5,10 +5,13 @@ import type { Env } from "../routes/contribute";
 // Mirror this value in dashboard/queries.sql (Query [2]) — SQL cannot import it directly.
 export const MIN_PROMOTION_CONFIDENCE = 0.7;
 
-// Max episode groups promoted per cron run. Bounds per-invocation D1 work so a
-// single run never depends on draining the whole backlog; oldest-first ordering
-// keeps it fair. Mirrors runSketchBuilder's bounded-sweep pattern.
-export const PROMOTION_BATCH_LIMIT = 100;
+// Max episode groups promoted per cron run. Bounds per-invocation work so a single
+// run completes within the cron's CPU/wall budget — a LIMIT of 100 overran it in
+// prod: a run terminated `exceededCpu` after only ~41 single-contributor groups
+// (~17s wall, dominated by the two sequential D1 round-trips per group). 30 leaves
+// comfortable margin and still far outpaces intake; oldest-first ordering keeps it
+// fair. Mirrors runSketchBuilder's bounded-sweep pattern.
+export const PROMOTION_BATCH_LIMIT = 30;
 
 // D1 caps bound parameters at 100 per statement. Any `... IN (?, ?, …)` whose
 // placeholder count scales with the number of contributors must be split into
@@ -112,20 +115,36 @@ async function promoteOne(
     tier = "candidate";
   }
 
-  // Build consensus fingerprint: union of hashes appearing in ≥50% of contributors.
-  const hashOccurrences = new Map<number, number>();
-  for (const c of contribs.results) {
-    const hashes = await decodeZstdVarint(new Uint8Array(c.fingerprint));
-    const unique = new Set(hashes);
-    for (const h of unique) hashOccurrences.set(h, (hashOccurrences.get(h) ?? 0) + 1);
+  // Build the consensus fingerprint. A single-contributor group — the overwhelming
+  // majority of the backlog — has a trivial consensus (the lone contributor's own
+  // hashes), so reuse that contribution's stored blob verbatim instead of paying the
+  // zstd decode + re-encode that dominate per-group CPU.
+  //
+  // Storing this raw (possibly unsorted/duplicate) blob is safe: a single-contributor
+  // group is always `candidate` tier (independentCount = 1 below), and the only
+  // CLIENT-facing consumer — the R2 pack (buildPack) — embeds `canonical` tier only
+  // (>=3 contributors), which always comes from the multi-contributor consensus path
+  // below (sorted + de-duped). So a raw blob never leaves the server; the
+  // server-internal readers (identify, sketch, the pack's document-frequency) all
+  // set-ify, where order and duplicates are irrelevant.
+  let consensusBlob: Uint8Array;
+  if (contribs.results.length === 1) {
+    consensusBlob = new Uint8Array(contribs.results[0].fingerprint);
+  } else {
+    // ≥2 contributors: union of hashes appearing in ≥50% of contributors.
+    const hashOccurrences = new Map<number, number>();
+    for (const c of contribs.results) {
+      const hashes = await decodeZstdVarint(new Uint8Array(c.fingerprint));
+      const unique = new Set(hashes);
+      for (const h of unique) hashOccurrences.set(h, (hashOccurrences.get(h) ?? 0) + 1);
+    }
+    const threshold = Math.ceil(contribs.results.length * 0.5);
+    const consensusHashes = [...hashOccurrences.entries()]
+      .filter(([, count]) => count >= threshold)
+      .map(([h]) => h)
+      .sort((a, b) => a - b);
+    consensusBlob = await encodeZstdVarint(consensusHashes);
   }
-  const threshold = Math.ceil(contribs.results.length * 0.5);
-  const consensusHashes = [...hashOccurrences.entries()]
-    .filter(([, count]) => count >= threshold)
-    .map(([h]) => h)
-    .sort((a, b) => a - b);
-
-  const consensusBlob = await encodeZstdVarint(consensusHashes);
 
   // Upsert canonical + mark contributions promoted in one DB.batch(): a single
   // D1 round-trip instead of two. D1 runs a batch as a single transaction —

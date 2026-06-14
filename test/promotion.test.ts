@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
-import { encodeZstdVarint, initCodec } from "../src/codec";
+import { decodeZstdVarint, encodeZstdVarint, initCodec } from "../src/codec";
 import { runPromotion } from "../src/workers/promotion";
 
 beforeAll(async () => {
@@ -54,6 +54,33 @@ describe("PromotionWorker", () => {
       `SELECT tier FROM episode_canonical WHERE tmdb_id = 11111 AND season = 1 AND episode = 1`,
     ).first<{ tier: string }>();
     expect(canonical?.tier).toBe("candidate");
+  });
+
+  it("stores a single contributor's fingerprint verbatim (fast-path skips re-encode)", async () => {
+    // A single-contributor consensus IS that contributor's hash set, so promoteOne
+    // reuses the submitted blob as-is instead of decode→sort-unique→re-encode (the
+    // zstd decode/encode dominate per-group CPU). Hashes are deliberately unsorted:
+    // the old consensus path reordered them to [1,2,3,4,5]; the fast-path preserves
+    // the submitted bytes. (Single-contributor episodes are `candidate` tier and are
+    // never packed, so this raw form never reaches a client — see promotion.ts.)
+    const hashes = [5, 3, 1, 4, 2];
+    await seedContribution({
+      pseudonym: "ae111111-1111-4111-8111-111111111111",
+      tmdb_id: 81001,
+      season: 1,
+      episode: 1,
+      hashes,
+      confidence: 0.9,
+    });
+    await runPromotion(env);
+    const row = await env.DB.prepare(
+      `SELECT fingerprint FROM episode_canonical WHERE tmdb_id = 81001 AND season = 1 AND episode = 1`,
+    ).first<{ fingerprint: ArrayBuffer }>();
+    const fingerprint = row?.fingerprint;
+    if (!fingerprint)
+      throw new Error("expected a promoted episode_canonical row for tmdb_id 81001");
+    const decoded = await decodeZstdVarint(new Uint8Array(fingerprint));
+    expect(decoded).toEqual(hashes);
   });
 
   it("promotes to CONFIRMED with 2 distinct (pseudonym × disc) pairs", async () => {

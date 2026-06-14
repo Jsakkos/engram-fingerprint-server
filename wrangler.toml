@@ -76,3 +76,14 @@ fallthrough = true
 # coverage keeps pace with intake (~63 sketches/run × 24 ≈ 1,512/day) within the 30s budget.
 [triggers]
 crons = ["0 3 * * *", "0 4 * * *", "0 * * * *", "30 * * * *"]
+
+# Workers Observability — capture console logs + per-invocation metadata (outcome,
+# wall/CPU time, errors) for every trigger INCLUDING the promotion cron, queryable in
+# the dashboard (~3-day retention). Kept in config so the source of truth is here: a
+# deploy can't silently flip the dashboard toggle back off (cf. the workers_dev
+# toggle reconciliation). head_sampling_rate = 1 logs 100% of invocations — the crons
+# are low-volume so full sampling reliably captures every scheduled run; dial down
+# only if /contribute log volume becomes costly.
+[observability]
+enabled = true
+head_sampling_rate = 1

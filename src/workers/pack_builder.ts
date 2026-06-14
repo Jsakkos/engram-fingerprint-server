@@ -85,6 +85,11 @@ async function buildPack(env: Env, tmdb_id: number): Promise<void> {
   // Build cross-episode document-frequency for rarity weighting (Phase 3).
   const df = new Map<number, number>();
   const decoded: { season: number; episode: number; fpB64: string }[] = [];
+  // Packs embed canonical-tier fingerprint bytes verbatim. Canonical tier requires
+  // >=3 contributors, so these blobs are always produced by promotion's
+  // multi-contributor consensus path (sorted + de-duped) — never the single-contributor
+  // fast-path, which only yields `candidate` tier and is never packed. So the embedded
+  // bytes are guaranteed sorted/unique without re-normalizing here. See promotion.ts.
   for (const e of eps.results) {
     const bytes = new Uint8Array(e.fingerprint);
     const hashes = await decodeZstdVarint(bytes);
