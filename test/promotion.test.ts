@@ -254,4 +254,40 @@ describe("PromotionWorker", () => {
     ).first<{ tier: string }>();
     expect(canonical?.tier).toBe("confirmed"); // 3 contributors but one flagged
   });
+
+  it("promotes an episode with >100 distinct contributors (D1 100-param bind cap)", async () => {
+    // promoteOne marks contributions promoted with `UPDATE ... WHERE id IN (?, ?, …)`
+    // inside its DB.batch, binding one parameter per contributor. D1 caps bound
+    // parameters at 100 per statement, so an episode with >100 distinct contributors
+    // overflows the cap — the batch throws, rolls back (canonical upsert included),
+    // is swallowed by runPromotion's per-group try/catch, and the episode silently
+    // never promotes (its contributions stay unpromoted and it re-throws every run).
+    const N = 150;
+    for (let i = 0; i < N; i++) {
+      await seedContribution({
+        pseudonym: `bb${String(i).padStart(6, "0")}-0000-4000-8000-${String(i).padStart(12, "0")}`,
+        tmdb_id: 77777,
+        season: 1,
+        episode: 1,
+        hashes: [1, 2, 3],
+        confidence: 0.9,
+        discHash: new Uint8Array([i & 0xff, (i >> 8) & 0xff]),
+      });
+    }
+
+    await runPromotion(env);
+
+    // Every contribution for the episode must be marked promoted — none left behind.
+    const unpromoted = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM contribution WHERE tmdb_id = 77777 AND promoted_at IS NULL`,
+    ).first<{ n: number }>();
+    expect(unpromoted?.n).toBe(0);
+
+    // …and the episode must actually land in the canonical set with all contributors counted.
+    const canonical = await env.DB.prepare(
+      `SELECT unique_contributors FROM episode_canonical
+       WHERE tmdb_id = 77777 AND season = 1 AND episode = 1`,
+    ).first<{ unique_contributors: number }>();
+    expect(canonical?.unique_contributors).toBe(N);
+  });
 });

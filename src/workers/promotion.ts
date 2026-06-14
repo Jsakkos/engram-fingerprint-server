@@ -10,6 +10,18 @@ export const MIN_PROMOTION_CONFIDENCE = 0.7;
 // keeps it fair. Mirrors runSketchBuilder's bounded-sweep pattern.
 export const PROMOTION_BATCH_LIMIT = 100;
 
+// D1 caps bound parameters at 100 per statement. Any `... IN (?, ?, …)` whose
+// placeholder count scales with the number of contributors must be split into
+// ≤100-element chunks, or an episode with >100 distinct contributors overflows
+// the cap, throws, and (caught by runPromotion) silently never promotes.
+const D1_MAX_BIND_PARAMS = 100;
+
+function chunk<T>(items: T[], size: number = D1_MAX_BIND_PARAMS): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
+  return chunks;
+}
+
 export async function runPromotion(env: Env, limit = PROMOTION_BATCH_LIMIT): Promise<void> {
   // 1. Oldest-eligible (tmdb_id, season, episode) groups first, bounded to `limit`
   //    per run — nothing starves, and one invocation never tries to drain it all.
@@ -132,8 +144,13 @@ async function promoteOne(
          mean_confidence = excluded.mean_confidence,
          promoted_at = excluded.promoted_at`,
     ).bind(tmdb_id, season, episode, tier, consensusBlob, independentCount, meanConfidence),
-    env.DB.prepare(
-      `UPDATE contribution SET promoted_at = unixepoch() WHERE id IN (${ids.map(() => "?").join(",")})`,
-    ).bind(...ids),
+    // Chunk the id list into ≤100-param UPDATEs — an episode with >100 distinct
+    // contributors would otherwise overflow D1's bind-param cap, throwing and
+    // rolling back the whole batch (so the episode would never promote).
+    ...chunk(ids).map((idChunk) =>
+      env.DB.prepare(
+        `UPDATE contribution SET promoted_at = unixepoch() WHERE id IN (${idChunk.map(() => "?").join(",")})`,
+      ).bind(...idChunk),
+    ),
   ]);
 }
