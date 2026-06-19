@@ -15,7 +15,7 @@ jobs:
     name: Typecheck & lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       # pnpm version comes from the "packageManager" field in package.json.
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v5
@@ -32,7 +32,7 @@ jobs:
     name: Tests & coverage
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v5
         with:
@@ -52,7 +52,7 @@ jobs:
     name: Build (wrangler dry-run)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v5
         with:
