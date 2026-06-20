@@ -22,6 +22,15 @@
 -- src/workers/promotion.ts and Query [2] in dashboard/queries.sql (SQL cannot import
 -- the constant — keep the three in sync).
 --
+-- Metric note: this counts DISTINCT pseudonyms, while promoteOne counts distinct
+-- (pseudonym, disc_content_hash) PAIRS. These agree in every normal case: promoteOne
+-- first dedups to the latest contribution per pseudonym, so each pseudonym yields
+-- exactly one pair and `unique_contributors` == distinct-pseudonym count. They would
+-- only diverge if one pseudonym submitted from two discs in the SAME second (a tie
+-- that survives the latest-per-pseudonym dedup) — and a pair-based count here would
+-- instead OVER-count (flagging already-correct episodes). DISTINCT pseudonym is thus
+-- the right metric; it catches all 225 real cases (each stuck at unique_contributors=1).
+--
 -- ── How to run (from the repo root) ──────────────────────────────────────────────
 -- 1. INSPECT first (which episodes will be reset, stored vs. actual contributor count):
 --      npx wrangler d1 execute engram-fingerprint --remote --command \

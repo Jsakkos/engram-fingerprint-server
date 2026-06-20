@@ -120,6 +120,16 @@ async function promoteOne(
   const independentCount = distinctPairs.size;
   const meanConfidence = confSum / contribs.results.length;
 
+  // `anyFlagged` bars the canonical tier (existing design: a flagged contributor
+  // taints the highest-trust tier). Note the cumulative-aggregation interaction:
+  // a flagged contributor arriving in a LATER cron window is now re-evaluated
+  // alongside all prior legitimate contributors, so an already-canonical episode
+  // is re-UPSERTed down to `confirmed` (still >=2 independent, but `anyFlagged`
+  // blocks canonical) rather than to `candidate`. The pre-fix code saw that late
+  // contributor in isolation (independentCount = 1) and dropped to `candidate`;
+  // capping at `confirmed` is the correct, less-severe realization of the same
+  // flagged-taint rule. Covered by the "flagged contributor caps a previously
+  // canonical episode at confirmed" test.
   let tier: "candidate" | "confirmed" | "canonical";
   if (independentCount >= 3 && meanConfidence >= 0.85 && !anyFlagged) {
     tier = "canonical";
