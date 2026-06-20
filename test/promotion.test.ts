@@ -282,6 +282,71 @@ describe("PromotionWorker", () => {
     expect(canonical?.tier).toBe("confirmed"); // 3 contributors but one flagged
   });
 
+  it("upgrades tier when subsequent contributors arrive in separate cron windows", async () => {
+    // Regression: contributions that arrive after the first promotion run were
+    // promoted in isolation because promoteOne() filtered promoted_at IS NULL,
+    // so each new batch saw only itself. unique_contributors stayed stuck at 1
+    // and the tier never advanced past candidate no matter how many people contributed.
+    const tmdb = 73001;
+
+    // First window: contributor A arrives, cron runs → candidate
+    await seedContribution({
+      pseudonym: "ad111111-1111-4111-8111-111111111111",
+      tmdb_id: tmdb,
+      season: 1,
+      episode: 1,
+      hashes: [1, 2, 3, 4, 5],
+      confidence: 0.9,
+      discHash: new Uint8Array([1]),
+    });
+    await runPromotion(env);
+    const afterFirst = await env.DB.prepare(
+      `SELECT tier, unique_contributors FROM episode_canonical WHERE tmdb_id = ? AND season = 1 AND episode = 1`,
+    )
+      .bind(tmdb)
+      .first<{ tier: string; unique_contributors: number }>();
+    expect(afterFirst?.tier).toBe("candidate");
+    expect(afterFirst?.unique_contributors).toBe(1);
+
+    // Second window: contributor B arrives later (A already promoted), cron runs → confirmed
+    await seedContribution({
+      pseudonym: "ad222222-2222-4222-8222-222222222222",
+      tmdb_id: tmdb,
+      season: 1,
+      episode: 1,
+      hashes: [1, 2, 3, 4, 5],
+      confidence: 0.9,
+      discHash: new Uint8Array([2]),
+    });
+    await runPromotion(env);
+    const afterSecond = await env.DB.prepare(
+      `SELECT tier, unique_contributors FROM episode_canonical WHERE tmdb_id = ? AND season = 1 AND episode = 1`,
+    )
+      .bind(tmdb)
+      .first<{ tier: string; unique_contributors: number }>();
+    expect(afterSecond?.tier).toBe("confirmed");
+    expect(afterSecond?.unique_contributors).toBe(2);
+
+    // Third window: contributor C arrives (A and B already promoted), cron runs → canonical
+    await seedContribution({
+      pseudonym: "ad333333-3333-4333-8333-333333333333",
+      tmdb_id: tmdb,
+      season: 1,
+      episode: 1,
+      hashes: [1, 2, 3, 4, 5],
+      confidence: 0.9,
+      discHash: new Uint8Array([3]),
+    });
+    await runPromotion(env);
+    const afterThird = await env.DB.prepare(
+      `SELECT tier, unique_contributors FROM episode_canonical WHERE tmdb_id = ? AND season = 1 AND episode = 1`,
+    )
+      .bind(tmdb)
+      .first<{ tier: string; unique_contributors: number }>();
+    expect(afterThird?.tier).toBe("canonical");
+    expect(afterThird?.unique_contributors).toBe(3);
+  });
+
   it("promotes an episode with >100 distinct contributors (D1 100-param bind cap)", async () => {
     // promoteOne marks contributions promoted with `UPDATE ... WHERE id IN (?, ?, …)`
     // inside its DB.batch, binding one parameter per contributor. D1 caps bound
