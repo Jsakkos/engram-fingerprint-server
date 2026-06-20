@@ -60,21 +60,34 @@ async function promoteOne(
   // Pull contributions; keep the most recent per pseudonym. The LEFT JOIN folds
   // each contributor's flagged status into this single read, so no separate
   // flagged-contributor query is needed.
+  //
+  // Aggregation is CUMULATIVE — like runDiscPromotion, we load ALL eligible
+  // contributions for the episode (promoted or not), so a late-arriving
+  // contributor correctly raises the tier. `promoted_at` is only a processing
+  // CURSOR, not a filter on what counts. Filtering on `promoted_at IS NULL` here
+  // (the original bug) meant promoteOne() saw only the contributions from the
+  // current cron window: a second contributor arriving an hour after the first
+  // — already promoted, so already stamped — was invisible, unique_contributors
+  // stayed stuck at 1, and the UPSERT below kept overwriting the row back to
+  // `candidate` no matter how many people had contributed. We aggregate over the
+  // full history for the tier + consensus fingerprint, then use `is_new` to stamp
+  // only the freshly-unpromoted rows in the final UPDATE.
   const contribs = await env.DB.prepare(
     `SELECT c.id, c.pseudonym, c.disc_content_hash, c.match_confidence, c.fingerprint, c.received_at,
-            COALESCE(ctr.flagged, 0) AS flagged
+            COALESCE(ctr.flagged, 0) AS flagged,
+            (c.promoted_at IS NULL) AS is_new
      FROM contribution c
      INNER JOIN (
        SELECT pseudonym, MAX(received_at) AS max_rcv
        FROM contribution
        WHERE tmdb_id = ? AND season IS ? AND episode IS ?
-         AND promoted_at IS NULL AND poison_check = 'pass' AND match_confidence >= ${MIN_PROMOTION_CONFIDENCE}
+         AND poison_check = 'pass' AND match_confidence >= ${MIN_PROMOTION_CONFIDENCE}
          AND match_source != 'network_disc'
        GROUP BY pseudonym
      ) latest ON c.pseudonym = latest.pseudonym AND c.received_at = latest.max_rcv
      LEFT JOIN contributor ctr ON ctr.pseudonym = c.pseudonym
      WHERE c.tmdb_id = ? AND c.season IS ? AND c.episode IS ?
-       AND c.promoted_at IS NULL AND c.poison_check = 'pass' AND c.match_confidence >= ${MIN_PROMOTION_CONFIDENCE}
+       AND c.poison_check = 'pass' AND c.match_confidence >= ${MIN_PROMOTION_CONFIDENCE}
        AND c.match_source != 'network_disc'`,
   )
     .bind(tmdb_id, season, episode, tmdb_id, season, episode)
@@ -86,6 +99,7 @@ async function promoteOne(
       fingerprint: ArrayBuffer;
       received_at: number;
       flagged: number;
+      is_new: number;
     }>();
 
   if (contribs.results.length === 0) return;
@@ -106,6 +120,16 @@ async function promoteOne(
   const independentCount = distinctPairs.size;
   const meanConfidence = confSum / contribs.results.length;
 
+  // `anyFlagged` bars the canonical tier (existing design: a flagged contributor
+  // taints the highest-trust tier). Note the cumulative-aggregation interaction:
+  // a flagged contributor arriving in a LATER cron window is now re-evaluated
+  // alongside all prior legitimate contributors, so an already-canonical episode
+  // is re-UPSERTed down to `confirmed` (still >=2 independent, but `anyFlagged`
+  // blocks canonical) rather than to `candidate`. The pre-fix code saw that late
+  // contributor in isolation (independentCount = 1) and dropped to `candidate`;
+  // capping at `confirmed` is the correct, less-severe realization of the same
+  // flagged-taint rule. Covered by the "flagged contributor caps a previously
+  // canonical episode at confirmed" test.
   let tier: "candidate" | "confirmed" | "canonical";
   if (independentCount >= 3 && meanConfidence >= 0.85 && !anyFlagged) {
     tier = "canonical";
@@ -151,7 +175,10 @@ async function promoteOne(
   // statements commit sequentially and the whole sequence rolls back if any one
   // fails (see Cloudflare D1 worker-api docs) — so there is no partial state
   // where the canonical row exists but its contributions are still unpromoted.
-  const ids = contribs.results.map((c) => c.id);
+  // Only stamp rows that arrived after the last promotion (is_new = 1); already-
+  // promoted contributions are included above for tier/fingerprint accuracy but
+  // must not have their promoted_at overwritten.
+  const ids = contribs.results.filter((c) => c.is_new).map((c) => c.id);
   await env.DB.batch([
     env.DB.prepare(
       `INSERT INTO episode_canonical (tmdb_id, season, episode, tier, fingerprint, unique_contributors, mean_confidence, promoted_at)

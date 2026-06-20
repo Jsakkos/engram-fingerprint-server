@@ -282,6 +282,152 @@ describe("PromotionWorker", () => {
     expect(canonical?.tier).toBe("confirmed"); // 3 contributors but one flagged
   });
 
+  it("upgrades tier when subsequent contributors arrive in separate cron windows", async () => {
+    // Regression: contributions that arrive after the first promotion run were
+    // promoted in isolation because promoteOne() filtered promoted_at IS NULL,
+    // so each new batch saw only itself. unique_contributors stayed stuck at 1
+    // and the tier never advanced past candidate no matter how many people contributed.
+    const tmdb = 73001;
+
+    // First window: contributor A arrives, cron runs → candidate
+    await seedContribution({
+      pseudonym: "ad111111-1111-4111-8111-111111111111",
+      tmdb_id: tmdb,
+      season: 1,
+      episode: 1,
+      hashes: [1, 2, 3, 4, 5],
+      confidence: 0.9,
+      discHash: new Uint8Array([1]),
+    });
+    await runPromotion(env);
+    const afterFirst = await env.DB.prepare(
+      `SELECT tier, unique_contributors FROM episode_canonical WHERE tmdb_id = ? AND season = 1 AND episode = 1`,
+    )
+      .bind(tmdb)
+      .first<{ tier: string; unique_contributors: number }>();
+    expect(afterFirst?.tier).toBe("candidate");
+    expect(afterFirst?.unique_contributors).toBe(1);
+    // Capture A's promotion stamp so we can assert later windows don't re-stamp it.
+    const aStamp = await env.DB.prepare(
+      `SELECT promoted_at FROM contribution WHERE pseudonym = 'ad111111-1111-4111-8111-111111111111' AND tmdb_id = ?`,
+    )
+      .bind(tmdb)
+      .first<{ promoted_at: number }>();
+    expect(aStamp?.promoted_at).not.toBeNull();
+
+    // Second window: contributor B arrives later (A already promoted), cron runs → confirmed
+    await seedContribution({
+      pseudonym: "ad222222-2222-4222-8222-222222222222",
+      tmdb_id: tmdb,
+      season: 1,
+      episode: 1,
+      hashes: [1, 2, 3, 4, 5],
+      confidence: 0.9,
+      discHash: new Uint8Array([2]),
+    });
+    await runPromotion(env);
+    const afterSecond = await env.DB.prepare(
+      `SELECT tier, unique_contributors FROM episode_canonical WHERE tmdb_id = ? AND season = 1 AND episode = 1`,
+    )
+      .bind(tmdb)
+      .first<{ tier: string; unique_contributors: number }>();
+    expect(afterSecond?.tier).toBe("confirmed");
+    expect(afterSecond?.unique_contributors).toBe(2);
+
+    // Third window: contributor C arrives (A and B already promoted), cron runs → canonical
+    await seedContribution({
+      pseudonym: "ad333333-3333-4333-8333-333333333333",
+      tmdb_id: tmdb,
+      season: 1,
+      episode: 1,
+      hashes: [1, 2, 3, 4, 5],
+      confidence: 0.9,
+      discHash: new Uint8Array([3]),
+    });
+    await runPromotion(env);
+    const afterThird = await env.DB.prepare(
+      `SELECT tier, unique_contributors FROM episode_canonical WHERE tmdb_id = ? AND season = 1 AND episode = 1`,
+    )
+      .bind(tmdb)
+      .first<{ tier: string; unique_contributors: number }>();
+    expect(afterThird?.tier).toBe("canonical");
+    expect(afterThird?.unique_contributors).toBe(3);
+
+    // is_new stamps only fresh arrivals: every eligible contribution is now promoted
+    // (B and C were stamped in their own windows)...
+    const unpromoted = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM contribution WHERE tmdb_id = ? AND promoted_at IS NULL`,
+    )
+      .bind(tmdb)
+      .first<{ n: number }>();
+    expect(unpromoted?.n).toBe(0);
+    // ...and A's original stamp was NOT overwritten by the two later windows.
+    const aStampAfter = await env.DB.prepare(
+      `SELECT promoted_at FROM contribution WHERE pseudonym = 'ad111111-1111-4111-8111-111111111111' AND tmdb_id = ?`,
+    )
+      .bind(tmdb)
+      .first<{ promoted_at: number }>();
+    expect(aStampAfter?.promoted_at).toBe(aStamp?.promoted_at);
+  });
+
+  it("flagged contributor caps a previously canonical episode at confirmed", async () => {
+    // Edge case of the cumulative fix: with the old (buggy) isolation, a flagged
+    // contributor arriving after canonical promotion was seen alone (independentCount=1,
+    // anyFlagged) and dropped the episode to candidate. Cumulatively, that same late
+    // flagged contributor is re-evaluated alongside the 3 prior clean ones, so the
+    // episode caps at confirmed (>=2 independent, but anyFlagged blocks canonical) —
+    // the correct, less-severe realization of the flagged-taint rule.
+    const tmdb = 74001;
+
+    // Windows 1-3: three clean contributors arrive in separate runs → canonical.
+    for (let i = 1; i <= 3; i++) {
+      await seedContribution({
+        pseudonym: `af10000${i}-0000-4000-8000-00000000000${i}`,
+        tmdb_id: tmdb,
+        season: 1,
+        episode: 1,
+        hashes: [1, 2, 3],
+        confidence: 0.9,
+        discHash: new Uint8Array([i]),
+      });
+      await runPromotion(env);
+    }
+    const beforeFlag = await env.DB.prepare(
+      `SELECT tier, unique_contributors FROM episode_canonical WHERE tmdb_id = ? AND season = 1 AND episode = 1`,
+    )
+      .bind(tmdb)
+      .first<{ tier: string; unique_contributors: number }>();
+    expect(beforeFlag?.tier).toBe("canonical");
+    expect(beforeFlag?.unique_contributors).toBe(3);
+
+    // Window 4: a flagged contributor arrives after canonical promotion.
+    const flagged = "af199999-9999-4999-8999-999999999999";
+    await env.DB.prepare(
+      `INSERT INTO contributor (pseudonym, first_seen, last_seen, flagged)
+       VALUES (?, unixepoch(), unixepoch(), 1)`,
+    )
+      .bind(flagged)
+      .run();
+    await seedContribution({
+      pseudonym: flagged,
+      tmdb_id: tmdb,
+      season: 1,
+      episode: 1,
+      hashes: [1, 2, 3],
+      confidence: 0.9,
+      discHash: new Uint8Array([9]),
+    });
+    await runPromotion(env);
+
+    const afterFlag = await env.DB.prepare(
+      `SELECT tier, unique_contributors FROM episode_canonical WHERE tmdb_id = ? AND season = 1 AND episode = 1`,
+    )
+      .bind(tmdb)
+      .first<{ tier: string; unique_contributors: number }>();
+    expect(afterFlag?.tier).toBe("confirmed"); // capped, NOT dropped to candidate
+    expect(afterFlag?.unique_contributors).toBe(4);
+  });
+
   it("promotes an episode with >100 distinct contributors (D1 100-param bind cap)", async () => {
     // promoteOne marks contributions promoted with `UPDATE ... WHERE id IN (?, ?, …)`
     // inside its DB.batch, binding one parameter per contributor. D1 caps bound
