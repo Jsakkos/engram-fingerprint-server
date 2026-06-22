@@ -6,6 +6,7 @@ import { handleForget } from "./routes/forget";
 import { handleIdentify } from "./routes/identify";
 import { handleIdentifyDisc } from "./routes/identify_disc";
 import { handlePack } from "./routes/pack";
+import { handleRetract } from "./routes/retract";
 import { runDiscPromotion } from "./workers/disc_promotion";
 import { runPackBuilder, runSketchBuilder } from "./workers/pack_builder";
 import { runPromotion } from "./workers/promotion";
@@ -49,6 +50,13 @@ async function routeRequest(request: Request, env: Env, url: URL): Promise<Respo
       return new Response("Method Not Allowed", { status: 405 });
     }
     return handleForget(request, env);
+  }
+
+  if (url.pathname === "/v1/retract") {
+    if (request.method !== "POST") {
+      return new Response("Method Not Allowed", { status: 405 });
+    }
+    return handleRetract(request, env);
   }
 
   if (url.pathname === "/v1/identify") {
