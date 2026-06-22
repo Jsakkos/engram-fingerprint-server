@@ -50,11 +50,23 @@ export async function handleRetract(request: Request, env: Env): Promise<Respons
 
   let canonical: "requeued" | "removed";
   if ((remaining?.n ?? 0) > 0) {
-    // Re-derive consensus from the remaining votes (immediate heal -- no waiting for cron).
-    await promoteOne(env, tmdb_id, season, episode);
+    // Re-derive consensus from the remaining votes immediately (NOT cron-deferred --
+    // promoteOne is awaited inline here). If it throws, the deletion already
+    // committed, so swallow + log and let the hourly promotion cron re-derive as the
+    // fallback rather than 500-ing a successful retraction.
+    try {
+      await promoteOne(env, tmdb_id, season, episode);
+    } catch (err) {
+      console.error(
+        `[retract] promoteOne failed after delete tmdb_id=${tmdb_id} s=${season} e=${episode}:`,
+        err,
+      );
+    }
     canonical = "requeued";
   } else {
     // No evidence left: promoteOne would no-op, so drop canonical + sketch explicitly.
+    // Both tables are TV-only today (NOT NULL season/episode per migration 001), so
+    // for a movie retraction (null season/episode) this batch is a harmless no-op.
     await env.DB.batch([
       env.DB.prepare(
         `DELETE FROM episode_canonical WHERE tmdb_id = ? AND season IS ? AND episode IS ?`,

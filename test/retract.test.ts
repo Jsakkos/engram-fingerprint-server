@@ -116,6 +116,33 @@ describe("handleRetract", () => {
     expect(json.canonical).toBe("untouched");
   });
 
+  it("retracts a movie fingerprint (null season/episode)", async () => {
+    const sha = new Uint8Array(32).fill(5);
+    await env.DB.prepare(
+      `INSERT INTO contribution
+         (pseudonym, tmdb_id, season, episode, fingerprint, fingerprint_sha256,
+          match_confidence, match_source, client_version, poison_check, promoted_at)
+       VALUES (?, 27205, NULL, NULL, ?, ?, 0.9, 'engram_asr', 'test', 'pass', NULL)`,
+    )
+      .bind(PSEUDO, new Uint8Array([1, 2, 3]), sha)
+      .run();
+
+    const resp = await handleRetract(
+      retractReq({
+        wire_format_version: 1,
+        pseudonym: PSEUDO,
+        tmdb_id: 27205,
+        season: null,
+        episode: null,
+        fingerprint_sha256_b64: b64(sha),
+      }),
+      env,
+    );
+    const json = await resp.json();
+    expect(json.deleted).toBe(1);
+    expect(json.canonical).toBe("removed");
+  });
+
   it("cannot delete another pseudonym's contribution", async () => {
     const sha = new Uint8Array(32).fill(7);
     await seedContribution({ pseudonym: OTHER, episode: 10, sha });
