@@ -13,18 +13,6 @@ export const MIN_PROMOTION_CONFIDENCE = 0.7;
 // fair. Mirrors runSketchBuilder's bounded-sweep pattern.
 export const PROMOTION_BATCH_LIMIT = 30;
 
-// D1 caps bound parameters at 100 per statement. Any `... IN (?, ?, …)` whose
-// placeholder count scales with the number of contributors must be split into
-// ≤100-element chunks, or an episode with >100 distinct contributors overflows
-// the cap, throws, and (caught by runPromotion) silently never promotes.
-const D1_MAX_BIND_PARAMS = 100;
-
-function chunk<T>(items: T[], size: number = D1_MAX_BIND_PARAMS): T[][] {
-  const chunks: T[][] = [];
-  for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
-  return chunks;
-}
-
 export async function runPromotion(env: Env, limit = PROMOTION_BATCH_LIMIT): Promise<void> {
   // 1. Oldest-eligible (tmdb_id, season, episode) groups first, bounded to `limit`
   //    per run — nothing starves, and one invocation never tries to drain it all.
@@ -70,12 +58,11 @@ async function promoteOne(
   // — already promoted, so already stamped — was invisible, unique_contributors
   // stayed stuck at 1, and the UPSERT below kept overwriting the row back to
   // `candidate` no matter how many people had contributed. We aggregate over the
-  // full history for the tier + consensus fingerprint, then use `is_new` to stamp
-  // only the freshly-unpromoted rows in the final UPDATE.
+  // full history for the tier + consensus fingerprint, then stamp ALL eligible
+  // unpromoted rows for the group (not just the deduplicated latest-per-pseudonym ones).
   const contribs = await env.DB.prepare(
     `SELECT c.id, c.pseudonym, c.disc_content_hash, c.match_confidence, c.fingerprint, c.received_at,
-            COALESCE(ctr.flagged, 0) AS flagged,
-            (c.promoted_at IS NULL) AS is_new
+            COALESCE(ctr.flagged, 0) AS flagged
      FROM contribution c
      INNER JOIN (
        SELECT pseudonym, MAX(received_at) AS max_rcv
@@ -99,7 +86,6 @@ async function promoteOne(
       fingerprint: ArrayBuffer;
       received_at: number;
       flagged: number;
-      is_new: number;
     }>();
 
   if (contribs.results.length === 0) return;
@@ -175,10 +161,12 @@ async function promoteOne(
   // statements commit sequentially and the whole sequence rolls back if any one
   // fails (see Cloudflare D1 worker-api docs) — so there is no partial state
   // where the canonical row exists but its contributions are still unpromoted.
-  // Only stamp rows that arrived after the last promotion (is_new = 1); already-
-  // promoted contributions are included above for tier/fingerprint accuracy but
-  // must not have their promoted_at overwritten.
-  const ids = contribs.results.filter((c) => c.is_new).map((c) => c.id);
+  // Stamp by group key (mirrors disc_promotion's markPromoted pattern) so that ALL
+  // eligible unpromoted rows for the episode are cleared — not just the one row
+  // per pseudonym selected by the MAX(received_at) deduplication above. Without
+  // this, a contributor who submits N times would have only their latest row
+  // stamped; the N-1 older rows would remain promoted_at IS NULL and the outer
+  // discovery query would keep re-selecting the episode indefinitely.
   await env.DB.batch([
     env.DB.prepare(
       `INSERT INTO episode_canonical (tmdb_id, season, episode, tier, fingerprint, unique_contributors, mean_confidence, promoted_at)
@@ -190,13 +178,12 @@ async function promoteOne(
          mean_confidence = excluded.mean_confidence,
          promoted_at = excluded.promoted_at`,
     ).bind(tmdb_id, season, episode, tier, consensusBlob, independentCount, meanConfidence),
-    // Chunk the id list into ≤100-param UPDATEs — an episode with >100 distinct
-    // contributors would otherwise overflow D1's bind-param cap, throwing and
-    // rolling back the whole batch (so the episode would never promote).
-    ...chunk(ids).map((idChunk) =>
-      env.DB.prepare(
-        `UPDATE contribution SET promoted_at = unixepoch() WHERE id IN (${idChunk.map(() => "?").join(",")})`,
-      ).bind(...idChunk),
-    ),
+    env.DB.prepare(
+      `UPDATE contribution SET promoted_at = unixepoch()
+       WHERE tmdb_id = ? AND season IS ? AND episode IS ?
+         AND promoted_at IS NULL
+         AND poison_check = 'pass' AND match_confidence >= ${MIN_PROMOTION_CONFIDENCE}
+         AND match_source != 'network_disc'`,
+    ).bind(tmdb_id, season, episode),
   ]);
 }
