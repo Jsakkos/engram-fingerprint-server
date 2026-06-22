@@ -441,7 +441,11 @@ describe("PromotionWorker", () => {
     // Three submissions from the same contributor: each has a distinct fingerprint_sha256
     // (simulating slightly different fingerprints from different viewing sessions),
     // which the UNIQUE(pseudonym, tmdb_id, season, episode, fingerprint_sha256) constraint requires.
-    for (const [idx, received_at] of [[0, 1000], [1, 2000], [2, 3000]] as [number, number][]) {
+    for (const [idx, received_at] of [
+      [0, 1000],
+      [1, 2000],
+      [2, 3000],
+    ] as [number, number][]) {
       await env.DB.prepare(
         `INSERT INTO contribution
            (received_at, pseudonym, tmdb_id, season, episode, fingerprint, fingerprint_sha256,
