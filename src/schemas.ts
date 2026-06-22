@@ -96,8 +96,9 @@ export const RetractRequestSchema = z.object({
   tmdb_id: z.number().int().positive(),
   season: z.number().int().min(0).nullable(),
   episode: z.number().int().min(0).nullable(),
-  // SHA256 of the decompressed varint stream — the server's per-fingerprint dedup key.
-  fingerprint_sha256_b64: Base64,
+  // A SHA256 is 32 bytes → exactly 44 base64 chars with padding (the client emits
+  // standard padded base64). Reject empty/garbage that the bare Base64 regex allows.
+  fingerprint_sha256_b64: Base64.length(44),
 });
 
 export const RetractResponseSchema = z.object({

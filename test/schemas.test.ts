@@ -116,7 +116,7 @@ describe("RetractRequestSchema", () => {
     tmdb_id: 1396,
     season: 3,
     episode: 10,
-    fingerprint_sha256_b64: "AAAA",
+    fingerprint_sha256_b64: "A".repeat(43) + "=",
   };
 
   it("accepts a valid retract body", () => {
@@ -131,5 +131,15 @@ describe("RetractRequestSchema", () => {
 
   it("rejects a non-UUID pseudonym", () => {
     expect(RetractRequestSchema.safeParse({ ...base, pseudonym: "nope" }).success).toBe(false);
+  });
+
+  it("rejects a non-positive tmdb_id", () => {
+    expect(RetractRequestSchema.safeParse({ ...base, tmdb_id: -1 }).success).toBe(false);
+  });
+
+  it("rejects a malformed fingerprint hash", () => {
+    expect(
+      RetractRequestSchema.safeParse({ ...base, fingerprint_sha256_b64: "not base64!!" }).success,
+    ).toBe(false);
   });
 });
