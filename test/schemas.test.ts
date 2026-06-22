@@ -3,6 +3,7 @@ import {
   ContributionRequestSchema,
   ForgetRequestSchema,
   IdentifyResponseSchema,
+  RetractRequestSchema,
 } from "../src/schemas";
 
 describe("schemas", () => {
@@ -105,5 +106,30 @@ describe("IdentifyResponseSchema", () => {
       ],
     });
     expect(missing.success).toBe(false);
+  });
+});
+
+describe("RetractRequestSchema", () => {
+  const base = {
+    wire_format_version: 1 as const,
+    pseudonym: "00000000-0000-4000-8000-000000000000",
+    tmdb_id: 1396,
+    season: 3,
+    episode: 10,
+    fingerprint_sha256_b64: "AAAA",
+  };
+
+  it("accepts a valid retract body", () => {
+    expect(RetractRequestSchema.safeParse(base).success).toBe(true);
+  });
+
+  it("accepts null season/episode (movie fingerprint)", () => {
+    expect(RetractRequestSchema.safeParse({ ...base, season: null, episode: null }).success).toBe(
+      true,
+    );
+  });
+
+  it("rejects a non-UUID pseudonym", () => {
+    expect(RetractRequestSchema.safeParse({ ...base, pseudonym: "nope" }).success).toBe(false);
   });
 });

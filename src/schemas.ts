@@ -90,6 +90,21 @@ export const ForgetResponseSchema = z.object({
   canonical_unaffected: z.literal(true),
 });
 
+export const RetractRequestSchema = z.object({
+  wire_format_version: z.literal(1),
+  pseudonym: UUIDv4,
+  tmdb_id: z.number().int().positive(),
+  season: z.number().int().min(0).nullable(),
+  episode: z.number().int().min(0).nullable(),
+  // SHA256 of the decompressed varint stream — the server's per-fingerprint dedup key.
+  fingerprint_sha256_b64: Base64,
+});
+
+export const RetractResponseSchema = z.object({
+  deleted: z.number().int().min(0),
+  canonical: z.enum(["requeued", "removed", "untouched"]),
+});
+
 export const IdentifyCandidateSchema = z.object({
   tmdb_id: z.number().int().positive(),
   season: z.number().int().min(0),
