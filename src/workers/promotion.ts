@@ -39,7 +39,7 @@ export async function runPromotion(env: Env, limit = PROMOTION_BATCH_LIMIT): Pro
   }
 }
 
-async function promoteOne(
+export async function promoteOne(
   env: Env,
   tmdb_id: number,
   season: number | null,

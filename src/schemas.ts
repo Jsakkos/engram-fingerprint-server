@@ -90,6 +90,29 @@ export const ForgetResponseSchema = z.object({
   canonical_unaffected: z.literal(true),
 });
 
+export const RetractRequestSchema = z.object({
+  wire_format_version: z.literal(1),
+  pseudonym: UUIDv4,
+  tmdb_id: z.number().int().positive(),
+  season: z.number().int().min(0).nullable(),
+  episode: z.number().int().min(0).nullable(),
+  // A SHA256 is 32 bytes → exactly 44 base64 chars with padding (the client emits
+  // standard padded base64). Reject empty/garbage that the bare Base64 regex allows.
+  fingerprint_sha256_b64: Base64.length(44),
+});
+
+export const RetractResponseSchema = z.object({
+  deleted: z.number().int().min(0),
+  // What happened to the canonical row for the retracted identity:
+  //   re_derived       - votes remained; consensus recomputed inline (synchronously).
+  //   re_derive_failed - votes remained but the inline re-derive threw; the hourly
+  //                      promotion cron will heal it (the delete itself still succeeded).
+  //   removed          - no votes remained; canonical + sketch cleanup ran. Best-effort:
+  //                      a no-op for movie retractions (those tables are TV-only today).
+  //   untouched        - nothing matched the retraction (deleted: 0).
+  canonical: z.enum(["re_derived", "re_derive_failed", "removed", "untouched"]),
+});
+
 export const IdentifyCandidateSchema = z.object({
   tmdb_id: z.number().int().positive(),
   season: z.number().int().min(0),

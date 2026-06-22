@@ -3,6 +3,7 @@ import {
   ContributionRequestSchema,
   ForgetRequestSchema,
   IdentifyResponseSchema,
+  RetractRequestSchema,
 } from "../src/schemas";
 
 describe("schemas", () => {
@@ -105,5 +106,47 @@ describe("IdentifyResponseSchema", () => {
       ],
     });
     expect(missing.success).toBe(false);
+  });
+});
+
+describe("RetractRequestSchema", () => {
+  const base = {
+    wire_format_version: 1 as const,
+    pseudonym: "00000000-0000-4000-8000-000000000000",
+    tmdb_id: 1396,
+    season: 3,
+    episode: 10,
+    fingerprint_sha256_b64: "A".repeat(43) + "=",
+  };
+
+  it("accepts a valid retract body", () => {
+    expect(RetractRequestSchema.safeParse(base).success).toBe(true);
+  });
+
+  it("accepts null season/episode (movie fingerprint)", () => {
+    expect(RetractRequestSchema.safeParse({ ...base, season: null, episode: null }).success).toBe(
+      true,
+    );
+  });
+
+  it("rejects a non-UUID pseudonym", () => {
+    expect(RetractRequestSchema.safeParse({ ...base, pseudonym: "nope" }).success).toBe(false);
+  });
+
+  it("rejects a non-positive tmdb_id", () => {
+    expect(RetractRequestSchema.safeParse({ ...base, tmdb_id: -1 }).success).toBe(false);
+  });
+
+  it("rejects a malformed fingerprint hash", () => {
+    expect(
+      RetractRequestSchema.safeParse({ ...base, fingerprint_sha256_b64: "not base64!!" }).success,
+    ).toBe(false);
+  });
+
+  it("rejects a base64 sha256 of the wrong length (43 chars)", () => {
+    // Valid charset but wrong length — exercises the Base64.length(44) gate, not just the regex.
+    expect(
+      RetractRequestSchema.safeParse({ ...base, fingerprint_sha256_b64: "A".repeat(43) }).success,
+    ).toBe(false);
   });
 });
