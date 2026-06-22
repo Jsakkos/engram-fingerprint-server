@@ -103,7 +103,14 @@ export const RetractRequestSchema = z.object({
 
 export const RetractResponseSchema = z.object({
   deleted: z.number().int().min(0),
-  canonical: z.enum(["requeued", "removed", "untouched"]),
+  // What happened to the canonical row for the retracted identity:
+  //   re_derived       - votes remained; consensus recomputed inline (synchronously).
+  //   re_derive_failed - votes remained but the inline re-derive threw; the hourly
+  //                      promotion cron will heal it (the delete itself still succeeded).
+  //   removed          - no votes remained; canonical + sketch cleanup ran. Best-effort:
+  //                      a no-op for movie retractions (those tables are TV-only today).
+  //   untouched        - nothing matched the retraction (deleted: 0).
+  canonical: z.enum(["re_derived", "re_derive_failed", "removed", "untouched"]),
 });
 
 export const IdentifyCandidateSchema = z.object({

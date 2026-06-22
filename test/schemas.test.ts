@@ -142,4 +142,11 @@ describe("RetractRequestSchema", () => {
       RetractRequestSchema.safeParse({ ...base, fingerprint_sha256_b64: "not base64!!" }).success,
     ).toBe(false);
   });
+
+  it("rejects a base64 sha256 of the wrong length (43 chars)", () => {
+    // Valid charset but wrong length — exercises the Base64.length(44) gate, not just the regex.
+    expect(
+      RetractRequestSchema.safeParse({ ...base, fingerprint_sha256_b64: "A".repeat(43) }).success,
+    ).toBe(false);
+  });
 });

@@ -60,7 +60,7 @@ describe("handleRetract", () => {
     expect(resp.status).toBe(200);
     const json = await resp.json();
     expect(json.deleted).toBe(1);
-    expect(json.canonical).toBe("requeued");
+    expect(json.canonical).toBe("re_derived");
     const remaining = await env.DB.prepare(
       "SELECT COUNT(*) AS n FROM contribution WHERE tmdb_id=1396 AND season=3 AND episode=10",
     ).first<{ n: number }>();
@@ -76,6 +76,14 @@ describe("handleRetract", () => {
        VALUES (1396, 3, 10, 'candidate', ?, 1, 0.9, unixepoch())`,
     )
       .bind(new Uint8Array([1, 2, 3]))
+      .run();
+    // Seed a canonical_sketch row too, so the batch's DELETE FROM canonical_sketch is
+    // actually exercised (without this it would run against an empty table).
+    await env.DB.prepare(
+      `INSERT INTO canonical_sketch (tmdb_id, season, episode, sketch, hash_count, generated_at)
+       VALUES (1396, 3, 10, ?, 0, unixepoch())`,
+    )
+      .bind(new Uint8Array([0]))
       .run();
 
     const resp = await handleRetract(
@@ -96,6 +104,10 @@ describe("handleRetract", () => {
       "SELECT COUNT(*) AS n FROM episode_canonical WHERE tmdb_id=1396 AND season=3 AND episode=10",
     ).first<{ n: number }>();
     expect(canon?.n).toBe(0);
+    const sketch = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM canonical_sketch WHERE tmdb_id=1396 AND season=3 AND episode=10",
+    ).first<{ n: number }>();
+    expect(sketch?.n).toBe(0);
   });
 
   it("is idempotent -- a missing row returns deleted:0 / untouched", async () => {

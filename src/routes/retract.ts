@@ -48,25 +48,28 @@ export async function handleRetract(request: Request, env: Env): Promise<Respons
     .bind(tmdb_id, season, episode)
     .first<{ n: number }>();
 
-  let canonical: "requeued" | "removed";
+  let canonical: "re_derived" | "removed" | "re_derive_failed";
   if ((remaining?.n ?? 0) > 0) {
     // Re-derive consensus from the remaining votes immediately (NOT cron-deferred --
     // promoteOne is awaited inline here). If it throws, the deletion already
-    // committed, so swallow + log and let the hourly promotion cron re-derive as the
-    // fallback rather than 500-ing a successful retraction.
+    // committed, so swallow + log and report "re_derive_failed" (the hourly promotion
+    // cron is the fallback) rather than 500-ing a successful retraction. Reporting the
+    // failure honestly lets operators distinguish "healed now" from "will heal later".
     try {
       await promoteOne(env, tmdb_id, season, episode);
+      canonical = "re_derived";
     } catch (err) {
       console.error(
         `[retract] promoteOne failed after delete tmdb_id=${tmdb_id} s=${season} e=${episode}:`,
         err,
       );
+      canonical = "re_derive_failed";
     }
-    canonical = "requeued";
   } else {
     // No evidence left: promoteOne would no-op, so drop canonical + sketch explicitly.
     // Both tables are TV-only today (NOT NULL season/episode per migration 001), so
-    // for a movie retraction (null season/episode) this batch is a harmless no-op.
+    // for a movie retraction (null season/episode) this batch is a harmless no-op --
+    // "removed" therefore reports "canonical cleanup ran", not "a row necessarily existed".
     await env.DB.batch([
       env.DB.prepare(
         `DELETE FROM episode_canonical WHERE tmdb_id = ? AND season IS ? AND episode IS ?`,
