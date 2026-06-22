@@ -428,6 +428,38 @@ describe("PromotionWorker", () => {
     expect(afterFlag?.unique_contributors).toBe(4);
   });
 
+  it("stamps all contributions when one pseudonym submits multiple rows for the same episode", async () => {
+    // Bug: promoteOne's INNER JOIN selects only MAX(received_at) per pseudonym.
+    // On the first run, only the latest row (received_at=3000) is in `ids` and gets
+    // stamped. The older rows (received_at=1000, 2000) are left with promoted_at IS NULL.
+    // On the next run, the outer discovery query finds the episode again, but the
+    // INNER JOIN still returns the same latest row (now already promoted, is_new=0),
+    // so `ids` is empty, nothing gets stamped, and the episode loops forever.
+    const TMDB = 78001;
+    const PSEUDO = "ah111111-1111-4111-8111-111111111111";
+    const encoded = await encodeZstdVarint([1, 2, 3]);
+    // Three submissions from the same contributor: each has a distinct fingerprint_sha256
+    // (simulating slightly different fingerprints from different viewing sessions),
+    // which the UNIQUE(pseudonym, tmdb_id, season, episode, fingerprint_sha256) constraint requires.
+    for (const [idx, received_at] of [[0, 1000], [1, 2000], [2, 3000]] as [number, number][]) {
+      await env.DB.prepare(
+        `INSERT INTO contribution
+           (received_at, pseudonym, tmdb_id, season, episode, fingerprint, fingerprint_sha256,
+            match_confidence, match_source, client_version, poison_check)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'engram_asr', 'engram/0.9.2', 'pass')`,
+      )
+        .bind(received_at, PSEUDO, TMDB, 1, 1, encoded, new Uint8Array([idx, idx]), 0.9)
+        .run();
+    }
+
+    await runPromotion(env);
+
+    const unpromoted = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM contribution WHERE tmdb_id = ${TMDB} AND promoted_at IS NULL`,
+    ).first<{ n: number }>();
+    expect(unpromoted?.n).toBe(0);
+  });
+
   it("promotes an episode with >100 distinct contributors (D1 100-param bind cap)", async () => {
     // promoteOne marks contributions promoted with `UPDATE ... WHERE id IN (?, ?, …)`
     // inside its DB.batch, binding one parameter per contributor. D1 caps bound
