@@ -75,6 +75,7 @@ export async function handleIdentify(request: Request, env: Env): Promise<Respon
         episode: c.episode,
         offset_seconds: null, // canonical fingerprints carry no offsets in Phase 3; populated in Phase 4
         hash_overlap_pct: c.hash_overlap_pct,
+        temporal_coherence: c.temporal_coherence, // exposed so clients can flag high-overlap/low-coherence matches
         rarity_weighted_score: c.rarity_weighted_score,
         combined_score: c.combined_score, // server's ranking/gating signal — clients should threshold on this
         tier: c.tier,

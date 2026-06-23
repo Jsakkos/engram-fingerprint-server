@@ -59,6 +59,9 @@ describe("GET /v1/identify", () => {
     expect(data.candidates[0].tier).toBe("canonical");
     // combined_score is surfaced so clients gate on the same signal the server ranks/floors on.
     expect(data.candidates[0].combined_score).toBeGreaterThan(0.15);
+    // temporal_coherence is surfaced so clients can spot high-overlap/low-coherence
+    // matches (e.g. shuffled hashes) that combined_score alone would obscure.
+    expect(data.candidates[0].temporal_coherence).toBeGreaterThan(0.9);
   });
 
   it("returns no candidates for an unrelated query (confidence floor)", async () => {
