@@ -282,6 +282,85 @@ describe("PromotionWorker", () => {
     expect(canonical?.tier).toBe("confirmed"); // 3 contributors but one flagged
   });
 
+  it("does not promote a brand-new episode whose sole contributor is flagged", async () => {
+    // A flagged pseudonym is the ONLY evidence for an episode nobody else has
+    // touched. screenAntiPoison has nothing to conflict with on a never-before-seen
+    // episode, so this would otherwise reach `candidate` tier uncorroborated and feed
+    // the tier-blind sketch/identify/anti-poison-reference pipeline with fabricated
+    // data. Promotion must defer until a second, independent contributor shows up.
+    const flagged = "ad999999-9999-4999-8999-999999999999";
+    await env.DB.prepare(
+      `INSERT INTO contributor (pseudonym, first_seen, last_seen, flagged)
+       VALUES (?, unixepoch(), unixepoch(), 1)`,
+    )
+      .bind(flagged)
+      .run();
+
+    await seedContribution({
+      pseudonym: flagged,
+      tmdb_id: 73001,
+      season: 1,
+      episode: 1,
+      hashes: [1, 2, 3],
+      confidence: 0.9,
+    });
+
+    await runPromotion(env);
+
+    const canonical = await env.DB.prepare(
+      `SELECT tier FROM episode_canonical WHERE tmdb_id = 73001 AND season = 1 AND episode = 1`,
+    ).first<{ tier: string }>();
+    expect(canonical).toBeNull();
+
+    // The contribution is still stamped promoted so the discovery cursor advances —
+    // it won't spin every cron run — but a later independent contributor can still
+    // re-trigger the group via the existing cumulative/late-arrival aggregation.
+    const contrib = await env.DB.prepare(
+      `SELECT promoted_at FROM contribution WHERE tmdb_id = 73001 AND pseudonym = ?`,
+    )
+      .bind(flagged)
+      .first<{ promoted_at: number | null }>();
+    expect(contrib?.promoted_at).not.toBeNull();
+  });
+
+  it("promotes once a second, independent contributor corroborates a flagged pseudonym's sole episode", async () => {
+    const flagged = "ad888888-8888-4888-8888-888888888888";
+    await env.DB.prepare(
+      `INSERT INTO contributor (pseudonym, first_seen, last_seen, flagged)
+       VALUES (?, unixepoch(), unixepoch(), 1)`,
+    )
+      .bind(flagged)
+      .run();
+
+    await seedContribution({
+      pseudonym: flagged,
+      tmdb_id: 73002,
+      season: 1,
+      episode: 1,
+      hashes: [1, 2, 3],
+      confidence: 0.9,
+    });
+    await runPromotion(env);
+    let canonical = await env.DB.prepare(
+      `SELECT tier FROM episode_canonical WHERE tmdb_id = 73002 AND season = 1 AND episode = 1`,
+    ).first<{ tier: string }>();
+    expect(canonical).toBeNull();
+
+    await seedContribution({
+      pseudonym: "ad777777-7777-4777-8777-777777777777",
+      tmdb_id: 73002,
+      season: 1,
+      episode: 1,
+      hashes: [1, 2, 3],
+      confidence: 0.9,
+    });
+    await runPromotion(env);
+    canonical = await env.DB.prepare(
+      `SELECT tier FROM episode_canonical WHERE tmdb_id = 73002 AND season = 1 AND episode = 1`,
+    ).first<{ tier: string }>();
+    expect(canonical?.tier).toBe("confirmed");
+  });
+
   it("upgrades tier when subsequent contributors arrive in separate cron windows", async () => {
     // Regression: contributions that arrive after the first promotion run were
     // promoted in isolation because promoteOne() filtered promoted_at IS NULL,

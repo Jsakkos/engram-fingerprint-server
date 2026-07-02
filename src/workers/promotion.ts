@@ -106,6 +106,31 @@ export async function promoteOne(
   const independentCount = distinctPairs.size;
   const meanConfidence = confSum / contribs.results.length;
 
+  // A flagged contributor must not become the SOLE, uncorroborated source of a NEW
+  // episode_canonical row. screenAntiPoison can only compare a contribution against
+  // OTHER episodes' sketches, so a never-before-seen episode has nothing to conflict
+  // with and always passes. Without this guard, that single-contributor row would
+  // reach `candidate` tier and feed runSketchBuilder -> canonical_sketch, which both
+  // screenAntiPoison's reference set and screenIdentify's candidate pool read with NO
+  // tier filter — a known-bad (flagged) account could seed fabricated "canonical"
+  // reference data straight into other contributors' anti-poison checks and into
+  // /v1/identify results. Defer promotion until a second, independent contributor
+  // corroborates; stamp these contributions promoted so the cursor advances (a later
+  // corroborating contributor still re-triggers this group via the cumulative
+  // aggregation / late-arrival path used everywhere else in this function).
+  if (independentCount === 1 && anyFlagged) {
+    await env.DB.prepare(
+      `UPDATE contribution SET promoted_at = unixepoch()
+       WHERE tmdb_id = ? AND season IS ? AND episode IS ?
+         AND promoted_at IS NULL
+         AND poison_check = 'pass' AND match_confidence >= ${MIN_PROMOTION_CONFIDENCE}
+         AND match_source != 'network_disc'`,
+    )
+      .bind(tmdb_id, season, episode)
+      .run();
+    return;
+  }
+
   // `anyFlagged` bars the canonical tier (existing design: a flagged contributor
   // taints the highest-trust tier). Note the cumulative-aggregation interaction:
   // a flagged contributor arriving in a LATER cron window is now re-evaluated
