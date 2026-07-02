@@ -234,7 +234,7 @@ describe("POST /v1/contribute-disc", () => {
     expect((await post(body)).status).toBe(400);
   });
 
-  it("silently drops a flagged contributor (200 duplicate, no row written)", async () => {
+  it("still accepts contributions from a flagged contributor (not locked out — consensus in promotion is the safeguard)", async () => {
     const psn = "77777777-7777-4777-8777-777777777777";
     await env.DB.prepare(
       `INSERT INTO contributor (pseudonym, first_seen, last_seen, contribution_count, flagged, flag_count)
@@ -244,16 +244,16 @@ describe("POST /v1/contribute-disc", () => {
       .run();
 
     const res = await post(validBody({ pseudonym: psn }));
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(202);
     const json = (await res.json()) as { contribution_id: number; status: string };
-    expect(json.status).toBe("duplicate");
-    expect(json.contribution_id).toBe(0);
+    expect(json.status).toBe("accepted");
+    expect(json.contribution_id).toBeGreaterThan(0);
 
     const count = await env.DB.prepare(
       `SELECT COUNT(*) AS n FROM disc_contribution WHERE pseudonym = ?`,
     )
       .bind(psn)
       .first<{ n: number }>();
-    expect(count?.n).toBe(0);
+    expect(count?.n).toBe(1);
   });
 });

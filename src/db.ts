@@ -70,13 +70,3 @@ export async function insertContribution(
 
   return { contributionId, poisonCheck, isDuplicate: false };
 }
-
-export async function getContributor(
-  db: D1Database,
-  pseudonym: string,
-): Promise<{ pseudonym: string; flagged: number; flag_count: number } | null> {
-  return await db
-    .prepare(`SELECT pseudonym, flagged, flag_count FROM contributor WHERE pseudonym = ?`)
-    .bind(pseudonym)
-    .first<{ pseudonym: string; flagged: number; flag_count: number }>();
-}
