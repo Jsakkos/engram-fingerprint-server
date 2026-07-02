@@ -1,5 +1,5 @@
 import { decodeZstdVarint } from "../codec";
-import { getContributor, insertContribution } from "../db";
+import { insertContribution } from "../db";
 import {
   exactOverlap,
   incrementFlagCount,
@@ -67,14 +67,12 @@ export async function handleContribute(
     }
   }
 
-  const contributor = await getContributor(env.DB, req.pseudonym);
-  if (contributor?.flagged === 1) {
-    return Response.json(
-      { contribution_id: 0, poison_check: "flag_duplicate" as const, overlap_pct: 0 },
-      { status: 200 },
-    );
-  }
-
+  // A flagged contributor is NOT locked out — that would permaban someone over a
+  // handful of conflicts even when the bulk of their history is clean.
+  // Every submission still runs the same anti-poison screen as anyone else, and the
+  // existing multi-contributor consensus in promotion.ts (`anyFlagged` caps the group
+  // below `canonical`) is the actual safeguard: it demands corroborating votes from
+  // other contributors before trusting a flagged account's episode mapping again.
   let fingerprintBytes: Uint8Array;
   let fingerprintSha256: Uint8Array;
   try {

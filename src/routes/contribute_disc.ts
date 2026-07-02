@@ -1,4 +1,3 @@
-import { getContributor } from "../db";
 import { insertDiscContribution } from "../db_disc";
 import { canonicalTitlesJson, sha256Hex, titlesDigestInput } from "../disc_canonical_form";
 import { ContributeDiscRequestSchema } from "../schemas";
@@ -42,13 +41,11 @@ export async function handleContributeDisc(
     }
   }
 
-  // Silently drop flagged contributors (parallels the episode flow's benign
-  // flag_duplicate response).
-  const contributor = await getContributor(env.DB, req.pseudonym);
-  if (contributor?.flagged === 1) {
-    return Response.json({ contribution_id: 0, status: "duplicate" as const }, { status: 200 });
-  }
-
+  // A flagged contributor is NOT locked out of submitting — intake still accepts
+  // their disc contributions. runDiscPromotion already excludes a flagged
+  // pseudonym's votes from consensus (disc_promotion.ts), so a flagged account can't
+  // seed disc_canonical on its own; it needs independent corroboration like anyone
+  // else's evidence would.
   let discContentHash: Uint8Array;
   try {
     discContentHash = Uint8Array.from(atob(req.disc_content_hash_b64), (c) => c.charCodeAt(0));

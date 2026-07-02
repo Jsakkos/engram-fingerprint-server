@@ -66,4 +66,25 @@ describe("POST /v1/contribute — db insert + dedupe", () => {
     const json = (await res2.json()) as { poison_check: string };
     expect(json.poison_check).toBe("flag_duplicate");
   });
+
+  it("still accepts contributions from a flagged contributor (not locked out — consensus in promotion is the safeguard)", async () => {
+    const psn = "44444444-4444-4444-8444-444444444444";
+    await env.DB.prepare(
+      `INSERT INTO contributor (pseudonym, first_seen, last_seen, contribution_count, flagged, flag_count)
+       VALUES (?, unixepoch(), unixepoch(), 4, 1, 4)`,
+    )
+      .bind(psn)
+      .run();
+
+    const res = await post(await makeBody({ pseudonym: psn }));
+    expect(res.status).toBe(202);
+    const json = (await res.json()) as { contribution_id: number; poison_check: string };
+    expect(json.contribution_id).toBeGreaterThan(0);
+    expect(json.poison_check).toBe("pass");
+
+    const row = await env.DB.prepare("SELECT * FROM contribution WHERE id = ?")
+      .bind(json.contribution_id)
+      .first();
+    expect(row).not.toBeNull();
+  });
 });
