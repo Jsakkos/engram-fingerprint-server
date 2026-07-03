@@ -193,7 +193,8 @@ export function shapePayload(sets) {
     })),
     // Since PR #54, flagged contributors keep submitting (no more permaban) but
     // their evidence needs corroboration to reach canonical. total/passed/promoted
-    // shows they stay productive; the UI derives a pass-rate from passed/total.
+    // is a LIFETIME aggregate (no flagged_at column to isolate post-flag activity);
+    // the UI derives a pass-rate from passed/total and labels it as lifetime.
     flaggedActivity: {
       total: num(flagged.total),
       passed: num(flagged.passed),

@@ -668,13 +668,18 @@ function renderPoison(d) {
 
   // Graduated-trust side. When nobody is flagged, state that plainly instead of
   // showing an empty readout.
+  // These figures span each flagged contributor's FULL history: the schema has no
+  // flag timestamp (see migrations/001_initial.sql — contributor has no flagged_at),
+  // so we can't isolate post-flag activity. Labelled as lifetime rates, with an
+  // explicit caveat, rather than claiming they prove post-flag behaviour.
   const trustBody =
     flagged > 0
       ? '<div class="trust-stats">' +
         `<div class="pstat"><div class="pk">Flagged users</div><div class="pv amber">${fmtNum(flagged)}</div><div class="pnote">trust-limited</div></div>` +
-        `<div class="pstat"><div class="pk">Still passing</div><div class="pv ${passRate != null && passRate >= 0.5 ? "ok" : "amber"}">${passRate != null ? fmtPct(passRate) : "—"}</div><div class="pnote">${fmtNum(fa.passed)}/${fmtNum(fa.total)} subs</div></div>` +
-        `<div class="pstat"><div class="pk">Promoted</div><div class="pv">${fmtNum(fa.promoted)}</div><div class="pnote">still contributing</div></div>` +
-        "</div>"
+        `<div class="pstat"><div class="pk">Pass rate</div><div class="pv ${passRate != null && passRate >= 0.5 ? "ok" : "amber"}">${passRate != null ? fmtPct(passRate) : "—"}</div><div class="pnote">${fmtNum(fa.passed)}/${fmtNum(fa.total)} subs</div></div>` +
+        `<div class="pstat"><div class="pk">Promoted</div><div class="pv">${fmtNum(fa.promoted)}</div><div class="pnote">reached a tier</div></div>` +
+        "</div>" +
+        '<div class="trust-note">Lifetime totals across each contributor’s full history — the schema has no flag timestamp to isolate post-flag activity.</div>'
       : '<div class="trust-clear">No contributors are flagged — the catalog is running clean.</div>';
 
   const trust =

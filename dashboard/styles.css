@@ -1020,9 +1020,6 @@ main {
   margin-top: 3px;
   font-variant-numeric: tabular-nums;
 }
-.pstat.danger .pv {
-  color: var(--red);
-}
 .pstat.ok .pv {
   color: var(--green);
 }
@@ -1090,6 +1087,15 @@ main {
   font-size: 11.5px;
   color: var(--green-dim);
   text-align: center;
+}
+/* Honesty caveat: the stats above are lifetime, not post-flag (no flag timestamp
+   in the schema). Kept small and faint so it reads as a footnote, not a warning. */
+.trust-note {
+  margin-top: 9px;
+  font-size: 9.5px;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  color: var(--text-faint);
 }
 
 .table-wrap {
@@ -1168,9 +1174,6 @@ th.num {
   letter-spacing: 0.1em;
   text-transform: uppercase;
   border: 1px solid currentColor;
-}
-.badge.flag {
-  color: var(--red);
 }
 /* Post-#54: a flag limits trust, it doesn't ban — amber, not red. */
 .badge.trust {

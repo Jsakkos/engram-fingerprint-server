@@ -146,10 +146,14 @@ LIMIT 20;
 -- [22] graduated-trust signal: activity from FLAGGED contributors. Since PR #54
 -- flagged contributors are no longer permabanned — they keep submitting through
 -- the normal anti-poison screen, but their evidence needs independent
--- corroboration to reach canonical. This proves they stay productive: total
--- submissions from flagged pseudonyms, how many cleared the anti-poison screen
--- (poison_check = 'pass'), and how many have been promoted. A catalog with no
--- flagged contributors returns a single all-zero row (COALESCE guards the SUMs).
+-- corroboration to reach canonical. Reports total submissions from flagged
+-- pseudonyms, how many cleared the anti-poison screen (poison_check = 'pass'),
+-- and how many have been promoted. A catalog with no flagged contributors returns
+-- a single all-zero row (COALESCE guards the SUMs).
+-- CAVEAT: contributor (migrations/001_initial.sql) has no flagged_at column, so
+-- this counts each contributor's FULL history, not just post-flag submissions —
+-- the readout is a lifetime rate, and the UI labels it as such. Splitting
+-- pre/post-flag would need a flag-timestamp migration (out of scope here).
 SELECT
   COUNT(*) AS total,
   COALESCE(SUM(CASE WHEN c.poison_check = 'pass' THEN 1 ELSE 0 END), 0) AS passed,
