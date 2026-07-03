@@ -77,9 +77,16 @@
         <section class="panel span-2" id="growthPanel">
           <div class="panel-head">
             <span class="panel-label">CATALOG GROWTH</span>
-            <div class="mode-toggle" id="growthMode" role="group" aria-label="Chart mode">
-              <button type="button" data-mode="cumulative" class="active">CUMULATIVE</button>
-              <button type="button" data-mode="daily">PER&nbsp;DAY</button>
+            <div class="panel-controls">
+              <div class="mode-toggle" id="growthRange" role="group" aria-label="Time range">
+                <button type="button" data-range="7d">7D</button>
+                <button type="button" data-range="30d">30D</button>
+                <button type="button" data-range="all" class="active">ALL</button>
+              </div>
+              <div class="mode-toggle" id="growthMode" role="group" aria-label="Chart mode">
+                <button type="button" data-mode="cumulative" class="active">CUMULATIVE</button>
+                <button type="button" data-mode="daily">PER&nbsp;DAY</button>
+              </div>
             </div>
           </div>
           <div class="chart-wrap" id="growthChart"></div>
@@ -104,11 +111,11 @@
           <div class="barlist" id="sourceBars"></div>
         </section>
 
-        <!-- anti-poison health -->
-        <section class="panel" id="poisonPanel">
+        <!-- anti-poison health + graduated-trust story -->
+        <section class="panel span-2" id="poisonPanel">
           <div class="panel-head">
             <span class="panel-label">INTEGRITY</span>
-            <span class="panel-sub">anti-poison</span>
+            <span class="panel-sub">anti-poison · graduated trust</span>
           </div>
           <div class="poison" id="poison"></div>
         </section>
@@ -117,7 +124,13 @@
         <section class="panel span-2" id="showsPanel">
           <div class="panel-head">
             <span class="panel-label">TOP SHOWS</span>
-            <span class="panel-sub">by tracked episodes</span>
+            <input
+              type="search"
+              id="showsFilter"
+              class="panel-filter"
+              placeholder="filter shows…"
+              aria-label="Filter top shows by name"
+            />
           </div>
           <div class="table-wrap" id="showsTable"></div>
         </section>
@@ -129,15 +142,6 @@
             <span class="panel-sub">top submitters</span>
           </div>
           <div class="table-wrap" id="contributorsTable"></div>
-        </section>
-
-        <!-- ingress hosts: domain-migration drain gauge -->
-        <section class="panel" id="ingressPanel">
-          <div class="panel-head">
-            <span class="panel-label">INGRESS HOSTS</span>
-            <span class="panel-sub">last 30d · domain migration</span>
-          </div>
-          <div class="table-wrap" id="ingressTable"></div>
         </section>
 
         <!-- recent activity -->

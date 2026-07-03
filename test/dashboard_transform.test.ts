@@ -63,25 +63,25 @@ const SETS: unknown[][] = [
   ], // [16] recentContributions
 ];
 
-// A disc-recognition payload occupies positions [19]-[23] (migration 003). The
-// episode positions [0]-[18] still resolve as before; pad the fixture out to the
-// full length so shapePayload reads the disc sets by their QUERY_MAP index.
+// A disc-recognition payload occupies positions [17]-[21] (migration 003), with
+// the flagged-activity aggregate at [22]. The episode positions [0]-[16] still
+// resolve as before; pad the fixture out to the full length so shapePayload reads
+// the later sets by their QUERY_MAP index.
 const DISC_SETS: unknown[][] = [
   ...SETS, // [0]-[16]
-  [], // [17] ingressContributionsByHost
-  [], // [18] ingressContributorsByHost
-  [{ n: 42 }], // [19] discTotalContributions
-  [{ n: 17 }], // [20] discUniqueDiscs
+  [{ n: 42 }], // [17] discTotalContributions
+  [{ n: 17 }], // [18] discUniqueDiscs
   [
     { tier: "candidate", n: 5 },
     { tier: "confirmed", n: 3 },
     { tier: "canonical", n: 2 },
-  ], // [21] discTierBreakdown
+  ], // [19] discTierBreakdown
   [
     { bucket: 14, n: 4 },
     { bucket: 19, n: 6 },
-  ], // [22] discConfidenceDist
-  [{ tmdb_id: 1399, discs: 4, contributions: 9, contributors: 3 }], // [23] discTopShows
+  ], // [20] discConfidenceDist
+  [{ tmdb_id: 1399, discs: 4, contributions: 9, contributors: 3 }], // [21] discTopShows
+  [{ total: 12, passed: 9, promoted: 4 }], // [22] flaggedActivity
 ];
 
 describe("dashboard transform", () => {
@@ -140,37 +140,17 @@ describe("dashboard transform", () => {
     expect(d.timeseries.byTier.canonical).toEqual([]);
   });
 
-  it("merges per-host contribution + contributor counts into the ingress drain gauge", () => {
-    const contributionsByHost = [
-      { ingress_host: "api.engram.example", n: 120 },
-      { ingress_host: "engram-fp-prod.someone.workers.dev", n: 8 },
-      { ingress_host: null, n: 3 }, // rows predating migration 002
-    ];
-    const contributorsByHost = [
-      { ingress_host: "api.engram.example", n: 5 },
-      { ingress_host: "engram-fp-prod.someone.workers.dev", n: 1 },
-    ];
-    const sets = parseWranglerJson(
-      wrangler([...SETS, contributionsByHost, contributorsByHost]),
-    ) as unknown[][];
+  it("reads the flagged-contributor activity aggregate (graduated-trust signal)", () => {
+    const sets = parseWranglerJson(wrangler(DISC_SETS)) as unknown[][];
     const d = shapePayload(sets);
-    // Sorted by contribution volume; `legacy` flags *.workers.dev hosts (the
-    // host that must drain before retirement); null host reported as-is.
-    expect(d.ingressHosts).toEqual([
-      { host: "api.engram.example", contributions: 120, contributors: 5, legacy: false },
-      {
-        host: "engram-fp-prod.someone.workers.dev",
-        contributions: 8,
-        contributors: 1,
-        legacy: true,
-      },
-      { host: null, contributions: 3, contributors: 0, legacy: false },
-    ]);
+    expect(d.flaggedActivity).toEqual({ total: 12, passed: 9, promoted: 4 });
   });
 
-  it("defaults the ingress gauge to an empty list when the sets are absent", () => {
+  it("defaults flagged activity to a zeroed shape when its set is absent", () => {
+    // The episode-only fixture has no position [22], so the aggregate must fall
+    // back to all-zero rather than throwing (graceful zero-data degradation).
     const sets = parseWranglerJson(wrangler(SETS)) as unknown[][];
-    expect(shapePayload(sets).ingressHosts).toEqual([]);
+    expect(shapePayload(sets).flaggedActivity).toEqual({ total: 0, passed: 0, promoted: 0 });
   });
 
   it("tolerates leading notice lines before the JSON array", () => {

@@ -25,10 +25,30 @@ const SOURCE_LABELS = {
 };
 
 const TIERS = ["candidate", "confirmed", "canonical"];
+const GROWTH_RANGES = { "7d": 7, "30d": 30, all: Number.POSITIVE_INFINITY };
+
+// Restore the persisted set of hidden growth series (legend toggles). Guard the
+// parse so a corrupt localStorage value degrades to "nothing hidden".
+function loadHiddenSeries() {
+  try {
+    const raw = JSON.parse(localStorage.getItem("sl.growthHidden") || "[]");
+    return new Set(Array.isArray(raw) ? raw : []);
+  } catch {
+    return new Set();
+  }
+}
 
 const state = {
   source: localStorage.getItem("sl.source") === "remote" ? "remote" : "local",
   growthMode: localStorage.getItem("sl.growthMode") === "daily" ? "daily" : "cumulative",
+  growthRange: GROWTH_RANGES[localStorage.getItem("sl.growthRange")]
+    ? localStorage.getItem("sl.growthRange")
+    : "all",
+  growthHidden: loadHiddenSeries(),
+  // Per-table sort {key, dir}. dir: 1 asc, -1 desc. Persisted so a background
+  // refresh re-applies the user's chosen ordering instead of snapping back.
+  sort: { shows: null, contributors: null, discShows: null },
+  showsFilter: "",
   auto: true,
   lastData: null,
   lastUpdated: 0,
@@ -98,6 +118,42 @@ function animateBars(root) {
   });
 }
 
+// Sum of `n` over the last `days` calendar days of a {day, n} series. Used for the
+// tile "+N / 7d" delta: honest new-in-window volume, derived from the same
+// timeseries the growth chart plots (no fabricated period-over-period math).
+function windowSum(series, days) {
+  if (!series?.length) return 0;
+  const cutoff = new Date(Date.now() - days * 86400_000).toISOString().slice(0, 10);
+  let sum = 0;
+  for (const r of series) if (r.day >= cutoff) sum += r.n;
+  return sum;
+}
+
+// Tiny cumulative sparkline for a {day, n} series. Fixed viewBox with a stretched
+// aspect (preserveAspectRatio="none") so it fills whatever slot it lands in. Draws
+// a soft area under a crisp line, matching the growth oscilloscope's language at a
+// smaller scale. Returns "" for a series too short to trace.
+function sparklineSvg(series, color) {
+  if (!series || series.length < 2) return "";
+  let run = 0;
+  const vals = series.map((r) => (run += r.n));
+  const W = 100;
+  const H = 28;
+  const max = Math.max(1, ...vals);
+  const n = vals.length;
+  const x = (i) => (i / (n - 1)) * W;
+  const y = (v) => H - 2 - (v / max) * (H - 4);
+  const pts = vals.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const area = `0,${H} ${pts} ${W},${H}`;
+  return (
+    `<svg class="tile-spark-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">` +
+    `<polygon points="${area}" fill="${color}" opacity="0.1" />` +
+    `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5" ` +
+    `stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke" />` +
+    "</svg>"
+  );
+}
+
 // ---- data load --------------------------------------------------------------
 
 async function load(fresh = false) {
@@ -150,7 +206,6 @@ function render(d) {
   renderPoison(d);
   renderShows(d.topShows, d.names);
   renderContributors(d.topContributors);
-  renderIngress(d.ingressHosts);
   renderFeed(d.recent, d.names);
   renderDiscFunnel(d.disc);
   renderDiscConfidence(d.disc.confidenceDist);
@@ -174,33 +229,68 @@ function renderEmptyAll() {
 
 function renderTiles(d) {
   const t = d.totals;
+  const cSeries = d.timeseries.contributions;
+  const kSeries = d.timeseries.byTier.canonical;
   const tiles = [
     { label: "Shows", val: t.shows, foot: `${fmtNum(t.episodes)} episodes` },
-    { label: "Canonical", val: d.tiers.canonical, foot: "consensus-grade" },
+    {
+      label: "Canonical",
+      val: d.tiers.canonical,
+      foot: "consensus-grade",
+      series: kSeries,
+      delta: windowSum(kSeries, 7),
+      trend: COLORS.canonical,
+    },
     { label: "Packs", val: t.packs, foot: "shipped to R2" },
-    { label: "Contributions", val: t.contributions, foot: `${fmtNum(t.unpromoted)} queued` },
+    {
+      label: "Contributions",
+      val: t.contributions,
+      foot: `${fmtNum(t.unpromoted)} queued`,
+      series: cSeries,
+      delta: windowSum(cSeries, 7),
+      trend: COLORS.contributions,
+    },
     { label: "Contributors", val: t.contributors, foot: "unique" },
-    { label: "Flagged", val: t.flagged, foot: "contributors", warn: t.flagged > 0 },
+    // "Flagged" is no longer an alarm state (PR #54 ended the permaban): flagged
+    // contributors keep contributing under graduated trust. Present it neutrally,
+    // not as a warning tile.
+    { label: "Flagged", val: t.flagged, foot: "trust-limited" },
   ];
   const wrap = $("tiles");
+  // All fragments below are built from constants (labels, COLORS) and fmtNum'd
+  // integers — no external/user text reaches innerHTML here.
   if (wrap.children.length !== tiles.length) {
-    wrap.innerHTML = "";
-    tiles.forEach((spec, idx) => {
-      const tile = el("div", `tile${spec.warn ? " warn" : ""}`);
-      tile.style.animationDelay = `${idx * 55}ms`;
-      tile.innerHTML =
-        `<div class="tile-label">${spec.label}</div>` +
-        `<div class="tile-val" data-key="${spec.label}">0</div>` +
-        `<div class="tile-foot">${spec.foot}</div>`;
-      wrap.appendChild(tile);
-    });
+    wrap.replaceChildren(
+      ...tiles.map((spec, idx) => {
+        const tile = el("div", "tile");
+        tile.style.animationDelay = `${idx * 55}ms`;
+        tile.append(
+          el("div", "tile-label", spec.label),
+          el("div", "tile-val", "0"),
+          el("div", "tile-spark"),
+          el("div", "tile-foot"),
+        );
+        tile.querySelector(".tile-val").dataset.key = spec.label;
+        return tile;
+      }),
+    );
   }
-  tiles.forEach((spec) => {
+  for (const spec of tiles) {
     const valNode = wrap.querySelector(`[data-key="${spec.label}"]`);
     countUp(valNode, spec.val);
-    valNode.closest(".tile").querySelector(".tile-foot").textContent = spec.foot;
-    valNode.closest(".tile").classList.toggle("warn", !!spec.warn);
-  });
+    const tile = valNode.closest(".tile");
+    const foot = tile.querySelector(".tile-foot");
+    foot.textContent = spec.foot;
+    if (spec.delta > 0) {
+      const d7 = el("span", "tile-delta", `▲ ${fmtNum(spec.delta)} · 7d`);
+      d7.style.color = spec.trend;
+      foot.append(" ", d7);
+    }
+    // sparklineSvg emits only fixed markup + constant colors + numeric coords.
+    tile.querySelector(".tile-spark").innerHTML = spec.series
+      ? sparklineSvg(spec.series, spec.trend)
+      : "";
+  }
 }
 
 function renderFunnel(d) {
@@ -277,6 +367,23 @@ function renderFunnel(d) {
 
 // ---- growth oscilloscope (hand-rolled SVG) ----------------------------------
 
+// Series metadata in promotion-pipeline order; colours match the tier language
+// used everywhere else (cyan intake -> grey candidate -> amber confirmed -> green
+// canonical), so no swatch is ambiguous.
+const GROWTH_SERIES = [
+  { key: "contributions", label: "Contributions" },
+  { key: "candidate", label: "Candidate" },
+  { key: "confirmed", label: "Confirmed" },
+  { key: "canonical", label: "Canonical", area: true },
+];
+
+// Chart plot geometry (SVG user units). preserveAspectRatio="none" + CSS
+// height:auto means the rendered box keeps this 1000x300 aspect, so data->pixel
+// is a single uniform scale — which the hover crosshair relies on.
+const GC = { W: 1000, H: 300, padL: 46, padR: 16, padT: 16, padB: 30 };
+
+// Full cumulative/daily transform over ALL days, so a windowed cumulative view
+// still shows true running totals (not a sum that restarts inside the window).
 function alignSeries(map, days, cumulative) {
   let run = 0;
   return days.map((day) => {
@@ -284,6 +391,16 @@ function alignSeries(map, days, cumulative) {
     run += v;
     return cumulative ? run : v;
   });
+}
+
+// Live geometry + series for the hover handler, refreshed on every render.
+let growthGeom = null;
+
+// The last date (YYYY-MM-DD) still inside an N-day window, or null for "all".
+function rangeCutoff(range) {
+  const n = GROWTH_RANGES[range];
+  if (!Number.isFinite(n)) return null;
+  return new Date(Date.now() - (n - 1) * 86400_000).toISOString().slice(0, 10);
 }
 
 function renderGrowth(ts, mode) {
@@ -296,50 +413,35 @@ function renderGrowth(ts, mode) {
     confirmed: new Map(bt.confirmed.map((r) => [r.day, r.n])),
     canonical: new Map(bt.canonical.map((r) => [r.day, r.n])),
   };
-  const days = [
-    ...new Set([
-      ...maps.contributions.keys(),
-      ...maps.candidate.keys(),
-      ...maps.confirmed.keys(),
-      ...maps.canonical.keys(),
-    ]),
-  ].sort();
+  const allDays = [...new Set(Object.values(maps).flatMap((m) => [...m.keys()]))].sort();
 
-  // Legend + series in promotion-pipeline order; every colour matches the tier
-  // language used elsewhere, so no swatch is ambiguous (amber = confirmed, not
-  // "new contributors" as before).
-  $("growthLegend").innerHTML = [
-    ["contributions", "Contributions"],
-    ["candidate", "Candidate"],
-    ["confirmed", "Confirmed"],
-    ["canonical", "Canonical"],
-  ]
-    .map(
-      ([c, label]) =>
-        `<span class="lg"><span class="swatch" style="background:${COLORS[c]}"></span>${label}</span>`,
-    )
-    .join("");
+  renderGrowthLegend();
 
-  if (days.length === 0) {
-    host.innerHTML =
-      '<div class="empty-state">no dated records yet — seed or wait for the first contributions</div>';
+  if (allDays.length === 0) {
+    growthGeom = null;
+    host.replaceChildren(
+      el("div", "empty-state", "no dated records yet — seed or wait for the first contributions"),
+    );
     return;
   }
 
-  const series = [
-    { key: "contributions", color: COLORS.contributions },
-    { key: "candidate", color: COLORS.candidate },
-    { key: "confirmed", color: COLORS.confirmed },
-    { key: "canonical", color: COLORS.canonical, area: true },
-  ].map((s) => ({ ...s, values: alignSeries(maps[s.key], days, cumulative) }));
+  // Compute each series over the full history, then slice to the visible window so
+  // cumulative totals stay honest. A window with no data falls back to all-time.
+  const cutoff = rangeCutoff(state.growthRange);
+  let from = cutoff ? allDays.findIndex((d) => d >= cutoff) : 0;
+  if (from < 0) from = 0;
+  const days = allDays.slice(from);
 
-  const W = 1000;
-  const H = 300;
-  const padL = 46;
-  const padR = 16;
-  const padT = 16;
-  const padB = 30;
-  const yMax = Math.max(1, ...series.flatMap((s) => s.values));
+  const series = GROWTH_SERIES.map((s) => ({
+    ...s,
+    color: COLORS[s.key],
+    hidden: state.growthHidden.has(s.key),
+    values: alignSeries(maps[s.key], allDays, cumulative).slice(from),
+  }));
+
+  const { W, H, padL, padR, padT, padB } = GC;
+  const visible = series.filter((s) => !s.hidden);
+  const yMax = Math.max(1, ...visible.flatMap((s) => s.values));
   const n = days.length;
   const x = (i) => (n === 1 ? (padL + W - padR) / 2 : padL + (i / (n - 1)) * (W - padL - padR));
   const y = (v) => padT + (1 - v / yMax) * (H - padT - padB);
@@ -357,13 +459,11 @@ function renderGrowth(ts, mode) {
     svg += `<text class="axis-label" x="${x(i).toFixed(1)}" y="${H - 10}" text-anchor="middle">${days[i].slice(5)}</text>`;
   }
 
-  for (const s of series) {
+  for (const s of visible) {
     const pts = s.values.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`);
     if (s.area && n > 1) {
       const area = `${padL},${y(0).toFixed(1)} ${pts.join(" ")} ${(W - padR).toFixed(1)},${y(0).toFixed(1)}`;
       svg += `<polygon points="${area}" fill="${s.color}" opacity="0.08" />`;
-    }
-    if (s.area && n > 1) {
       // faux glow: thick low-opacity stroke under the crisp line
       svg += `<polyline class="series-path" points="${pts.join(" ")}" stroke="${s.color}" stroke-width="6" opacity="0.18" />`;
     }
@@ -372,7 +472,108 @@ function renderGrowth(ts, mode) {
     svg += `<circle class="series-dot" cx="${x(li).toFixed(1)}" cy="${y(s.values[li]).toFixed(1)}" r="3.5" fill="${s.color}" />`;
   }
   svg += "</svg>";
+
+  // The SVG string is built entirely from constants + numeric coords; overlay the
+  // interaction layer (crosshair + dots + tooltip) as sibling nodes.
   host.innerHTML = svg;
+  host.append(el("div", "gc-crosshair"), el("div", "gc-dots"), el("div", "gc-tooltip"));
+
+  growthGeom = { days, series, visible, x, y, yMax, n };
+}
+
+// Legend as toggle buttons: click to hide/show a series. Hidden series render
+// dimmed with a struck swatch and persist across refreshes.
+function renderGrowthLegend() {
+  const host = $("growthLegend");
+  host.replaceChildren(
+    ...GROWTH_SERIES.map((s) => {
+      const hidden = state.growthHidden.has(s.key);
+      const btn = el("button", `lg lg-toggle${hidden ? " off" : ""}`);
+      btn.type = "button";
+      btn.dataset.key = s.key;
+      btn.setAttribute("aria-pressed", String(!hidden));
+      const sw = el("span", "swatch");
+      sw.style.background = COLORS[s.key];
+      btn.append(sw, document.createTextNode(s.label));
+      return btn;
+    }),
+  );
+}
+
+// Toggle a growth series on/off, persist, and re-draw from the last payload.
+function toggleGrowthSeries(key) {
+  if (state.growthHidden.has(key)) state.growthHidden.delete(key);
+  else state.growthHidden.add(key);
+  localStorage.setItem("sl.growthHidden", JSON.stringify([...state.growthHidden]));
+  if (state.lastData) renderGrowth(state.lastData.timeseries, state.growthMode);
+}
+
+// Map a pointer position over the chart to the nearest day index, then place the
+// crosshair, per-series dots, and a value tooltip. Uses getBoundingClientRect so
+// the uniform data->pixel scale is read from the live layout, not assumed.
+function moveGrowthCursor(clientX) {
+  if (!growthGeom) return;
+  const host = $("growthChart");
+  const svg = host.querySelector("svg");
+  if (!svg) return;
+  const rect = svg.getBoundingClientRect();
+  if (rect.width === 0) return;
+  const { W, H, padL, padR } = GC;
+  const { days, visible, x, y, n } = growthGeom;
+  const sx = rect.width / W;
+  const sy = rect.height / H;
+  const svgX = (clientX - rect.left) / sx;
+  const frac = (svgX - padL) / (W - padL - padR);
+  const idx = Math.max(0, Math.min(n - 1, Math.round(frac * (n - 1))));
+
+  const cx = x(idx) * sx;
+  const cross = host.querySelector(".gc-crosshair");
+  cross.style.left = `${cx}px`;
+  cross.classList.add("on");
+
+  const dotsHost = host.querySelector(".gc-dots");
+  dotsHost.replaceChildren(
+    ...visible.map((s) => {
+      const dot = el("i", "gc-dot");
+      dot.style.left = `${cx}px`;
+      dot.style.top = `${y(s.values[idx]) * sy}px`;
+      dot.style.background = s.color;
+      return dot;
+    }),
+  );
+
+  const tip = host.querySelector(".gc-tooltip");
+  const rows = visible
+    .map(
+      (s) =>
+        `<div class="gc-tip-row"><span class="gc-tip-sw" style="background:${s.color}"></span>` +
+        `<span class="gc-tip-label">${s.label}</span>` +
+        `<span class="gc-tip-val">${fmtNum(s.values[idx])}</span></div>`,
+    )
+    .join("");
+  // days[idx] is an ISO date string produced by SQLite date(); constants otherwise.
+  tip.innerHTML = `<div class="gc-tip-day">${days[idx]}</div>${rows}`;
+  // Flip the tooltip to the left of the cursor once it nears the right edge.
+  const flip = cx > rect.width * 0.62;
+  tip.classList.toggle("flip", flip);
+  tip.style.left = `${cx}px`;
+  tip.classList.add("on");
+}
+
+function hideGrowthCursor() {
+  const host = $("growthChart");
+  host.querySelector(".gc-crosshair")?.classList.remove("on");
+  host.querySelector(".gc-tooltip")?.classList.remove("on");
+  host.querySelector(".gc-dots")?.replaceChildren();
+}
+
+function setGrowthRange(range) {
+  if (!GROWTH_RANGES[range]) return;
+  state.growthRange = range;
+  localStorage.setItem("sl.growthRange", range);
+  for (const b of $("growthRange").children)
+    b.classList.toggle("active", b.dataset.range === range);
+  if (state.lastData) renderGrowth(state.lastData.timeseries, state.growthMode);
 }
 
 function renderTierLadder(d) {
@@ -425,6 +626,10 @@ function renderSources(sources) {
   animateBars(host);
 }
 
+// INTEGRITY panel. Two halves: the anti-poison SCREEN (verdict mix across the
+// unpromoted queue + avg overlap) and the GRADUATED-TRUST story for flagged
+// contributors. Since PR #54 a flag is trust-limiting, not a ban — the readout
+// proves flagged contributors stay productive rather than being dropped.
 function renderPoison(d) {
   const p = d.poison;
   const order = ["pass", "flag_conflict", "flag_duplicate", "pending"];
@@ -435,7 +640,6 @@ function renderPoison(d) {
     pending: "Pending",
   };
   const total = order.reduce((a, k) => a + (p[k] || 0), 0);
-  const host = $("poison");
   const bar = order
     .map(
       (k) => `<i class="poison-seg-${k}" data-w="${total ? ((p[k] || 0) / total) * 100 : 0}"></i>`,
@@ -447,14 +651,49 @@ function renderPoison(d) {
         `<div class="pl"><span class="sw poison-seg-${k}"></span>${labels[k]}<b>${fmtNum(p[k] || 0)}</b></div>`,
     )
     .join("");
+
+  const fa = d.flaggedActivity;
   const flagged = d.totals.flagged;
-  host.innerHTML =
+  const passRate = fa.total ? fa.passed / fa.total : null;
+
+  const screen =
+    '<div class="integrity-col">' +
+    '<div class="integrity-h">Anti-poison screen · unpromoted queue</div>' +
     `<div class="poison-bar">${bar}</div>` +
     `<div class="poison-legend">${legend}</div>` +
-    '<div class="poison-stats">' +
-    `<div class="pstat ${flagged > 0 ? "danger" : "ok"}"><div class="pk">Flagged users</div><div class="pv">${fmtNum(flagged)}</div></div>` +
-    `<div class="pstat"><div class="pk">Avg overlap</div><div class="pv">${fmtPct(d.overlap.avg)}</div></div>` +
+    '<div class="pstat wide"><div class="pk">Avg overlap</div>' +
+    `<div class="pv">${fmtPct(d.overlap.avg)}</div>` +
+    `<div class="pnote">peak ${fmtPct(d.overlap.max)} · ${fmtNum(d.overlap.n)} obs</div></div>` +
     "</div>";
+
+  // Graduated-trust side. When nobody is flagged, state that plainly instead of
+  // showing an empty readout.
+  // These figures span each flagged contributor's FULL history: the schema has no
+  // flag timestamp (see migrations/001_initial.sql — contributor has no flagged_at),
+  // so we can't isolate post-flag activity. Labelled as lifetime rates, with an
+  // explicit caveat, rather than claiming they prove post-flag behaviour.
+  const trustBody =
+    flagged > 0
+      ? '<div class="trust-stats">' +
+        `<div class="pstat"><div class="pk">Flagged users</div><div class="pv amber">${fmtNum(flagged)}</div><div class="pnote">trust-limited</div></div>` +
+        `<div class="pstat"><div class="pk">Pass rate</div><div class="pv ${passRate != null && passRate >= 0.5 ? "ok" : "amber"}">${passRate != null ? fmtPct(passRate) : "—"}</div><div class="pnote">${fmtNum(fa.passed)}/${fmtNum(fa.total)} subs</div></div>` +
+        `<div class="pstat"><div class="pk">Promoted</div><div class="pv">${fmtNum(fa.promoted)}</div><div class="pnote">reached a tier</div></div>` +
+        "</div>" +
+        '<div class="trust-note">Lifetime totals across each contributor’s full history — the schema has no flag timestamp to isolate post-flag activity.</div>'
+      : '<div class="trust-clear">No contributors are flagged — the catalog is running clean.</div>';
+
+  const trust =
+    '<div class="integrity-col">' +
+    '<div class="integrity-h">Graduated trust · flagged ≠ banned</div>' +
+    '<p class="trust-copy">Flagged contributors keep submitting through the anti-poison screen. ' +
+    "Their evidence needs independent corroboration to reach <b>canonical</b> — a flag caps a " +
+    "group at <b>confirmed</b> and can't seed new canonical data alone.</p>" +
+    trustBody +
+    "</div>";
+
+  const host = $("poison");
+  host.className = "poison integrity";
+  host.innerHTML = screen + trust;
   animateBars(host);
 }
 
@@ -468,13 +707,38 @@ function showCell(tmdbId, names) {
     : `<td class="id-cell">tmdb:${tmdbId}</td>`;
 }
 
+const SHOW_COLS = [
+  {
+    key: "name",
+    label: "Show",
+    get: (s, ctx) => (ctx?.names?.[s.tmdb_id] || `tmdb:${s.tmdb_id}`).toLowerCase(),
+  },
+  { key: "episodes", label: "Eps", num: true, get: (s) => s.episodes },
+  { label: "Mix" },
+  { key: "canonical", label: "Canon", num: true, get: (s) => s.canonical },
+  { key: "avg_conf", label: "Conf", num: true, get: (s) => s.avg_conf },
+];
+
+// Does a show match the free-text TOP SHOWS filter? Matches the resolved name or
+// the raw tmdb id, case-insensitively; an empty filter matches everything.
+function showMatchesFilter(s, names) {
+  const q = state.showsFilter.trim().toLowerCase();
+  if (!q) return true;
+  const name = names?.[s.tmdb_id];
+  return (name || "").toLowerCase().includes(q) || `tmdb:${s.tmdb_id}`.includes(q);
+}
+
 function renderShows(shows, names) {
   const host = $("showsTable");
-  if (!shows.length) {
-    host.innerHTML = '<div class="empty-state">no episodes tracked yet</div>';
+  const filtered = shows.filter((s) => showMatchesFilter(s, names));
+  if (!filtered.length) {
+    host.innerHTML = `<div class="empty-state">${
+      shows.length ? "no shows match the filter" : "no episodes tracked yet"
+    }</div>`;
     return;
   }
-  const rows = shows
+  const sorted = applySort(filtered, "shows", SHOW_COLS, { names });
+  const rows = sorted
     .map((s) => {
       const total = Math.max(1, s.episodes);
       const seg = (cls, v) =>
@@ -490,11 +754,15 @@ function renderShows(shows, names) {
       );
     })
     .join("");
-  host.innerHTML =
-    "<table><thead><tr>" +
-    '<th>Show</th><th class="num">Eps</th><th>Mix</th><th class="num">Canon</th><th class="num">Conf</th>' +
-    `</tr></thead><tbody>${rows}</tbody></table>`;
+  host.innerHTML = `<table>${sortableHead("shows", SHOW_COLS)}<tbody>${rows}</tbody></table>`;
 }
+
+const CONTRIB_COLS = [
+  { key: "pseudonym", label: "Pseudonym", get: (c) => c.pseudonym || "" },
+  { key: "count", label: "Submissions", num: true, get: (c) => c.count },
+  // Sort flagged-first by weighting on flag_count; clean contributors sort to 0.
+  { key: "status", label: "Status", num: true, get: (c) => (c.flagged ? c.flag_count || 1 : 0) },
+];
 
 function renderContributors(list) {
   const host = $("contributorsTable");
@@ -502,11 +770,14 @@ function renderContributors(list) {
     host.innerHTML = '<div class="empty-state">no contributors yet</div>';
     return;
   }
-  const rows = list
+  const sorted = applySort(list, "contributors", CONTRIB_COLS);
+  const rows = sorted
     .map((c) => {
       const id = `${String(c.pseudonym).slice(0, 8)}…`;
+      // Post-#54 a flag is trust-limiting, not a ban — amber "trust-limited",
+      // not red "flagged". The title spells out what the flag now means.
       const badge = c.flagged
-        ? `<span class="badge flag">flagged ${c.flag_count}</span>`
+        ? `<span class="badge trust" title="Trust-limited: keeps contributing, but needs independent corroboration to reach canonical (${c.flag_count} flag${c.flag_count === 1 ? "" : "s"})">trust-limited ${c.flag_count}</span>`
         : '<span class="badge ok">ok</span>';
       return (
         "<tr>" +
@@ -517,42 +788,80 @@ function renderContributors(list) {
       );
     })
     .join("");
-  host.innerHTML =
-    "<table><thead><tr>" +
-    '<th>Pseudonym</th><th class="num">Submissions</th><th>Status</th>' +
-    `</tr></thead><tbody>${rows}</tbody></table>`;
+  host.innerHTML = `<table>${sortableHead("contributors", CONTRIB_COLS)}<tbody>${rows}</tbody></table>`;
 }
 
-// Domain-migration drain gauge: contributions + distinct contributors per ingress
-// host over the last 30 days. The legacy *.workers.dev host is badged so its
-// distinct-contributor count can be watched to ~0 before retirement; a null host
-// (rows predating the ingress_host column) renders as "(unrecorded)".
-function renderIngress(list) {
-  const host = $("ingressTable");
-  if (!list?.length) {
-    host.innerHTML = '<div class="empty-state">no recent contributions</div>';
-    return;
-  }
-  const rows = list
-    .map((h) => {
-      const label = h.host ? escapeHtml(h.host) : '<span class="mono-dim">(unrecorded)</span>';
-      const badge = h.legacy
-        ? '<span class="badge flag">legacy</span>'
-        : '<span class="badge ok">current</span>';
+// ---- sortable tables --------------------------------------------------------
+// Shared helpers for the hero tables (TOP SHOWS / CONTRIBUTORS / DISC SHOWS).
+// Each column carries an accessor + a numeric flag; sort state is per-table and
+// persisted in `state.sort` so a background refresh keeps the chosen ordering.
+
+// Build a sortable <thead> row for a table. `sorted` columns get an aria-sort +
+// arrow; headers are focusable buttons so the sort is keyboard-reachable.
+function sortableHead(tableKey, cols) {
+  const s = state.sort[tableKey];
+  return `<thead><tr>${cols
+    .map((c) => {
+      if (!c.key) return `<th${c.num ? ' class="num"' : ""}>${c.label}</th>`;
+      const active = s && s.key === c.key;
+      const aria = active ? (s.dir === 1 ? "ascending" : "descending") : "none";
+      const arrow = active ? (s.dir === 1 ? "▲" : "▼") : "↕";
       return (
-        "<tr>" +
-        `<td class="mono-dim">${label}</td>` +
-        `<td class="num">${fmtNum(h.contributions)}</td>` +
-        `<td class="num">${fmtNum(h.contributors)}</td>` +
-        `<td>${badge}</td>` +
-        "</tr>"
+        `<th class="sortable${c.num ? " num" : ""}${active ? " sorted" : ""}" ` +
+        `data-sort="${c.key}" aria-sort="${aria}" tabindex="0" role="button">` +
+        `${c.label}<span class="sort-arrow">${arrow}</span></th>`
       );
     })
-    .join("");
-  host.innerHTML =
-    "<table><thead><tr>" +
-    '<th>Host</th><th class="num">Contributions</th><th class="num">Contributors</th><th>Status</th>' +
-    `</tr></thead><tbody>${rows}</tbody></table>`;
+    .join("")}</tr></thead>`;
+}
+
+// Return a sorted copy of `rows` per the table's sort state (no-op when unset).
+// `ctx` is passed to column accessors so name columns can resolve tmdb->name.
+function applySort(rows, tableKey, cols, ctx) {
+  const s = state.sort[tableKey];
+  if (!s) return rows;
+  const col = cols.find((c) => c.key === s.key);
+  if (!col?.get) return rows;
+  return [...rows].sort((a, b) => {
+    const av = col.get(a, ctx);
+    const bv = col.get(b, ctx);
+    const cmp =
+      typeof av === "number" && typeof bv === "number"
+        ? av - bv
+        : String(av).localeCompare(String(bv));
+    return cmp * s.dir;
+  });
+}
+
+// Toggle/replace the sort for a table and re-render it from the last payload.
+// First click on a column uses its natural direction (numbers desc, text asc);
+// clicking the active column flips it.
+function cycleSort(tableKey, cols, key, rerender) {
+  const col = cols.find((c) => c.key === key);
+  if (!col) return;
+  const s = state.sort[tableKey];
+  if (s && s.key === key) s.dir *= -1;
+  else state.sort[tableKey] = { key, dir: col.num ? -1 : 1 };
+  rerender();
+}
+
+// Wire a table host for header clicks + keyboard (Enter/Space) activation.
+function wireSort(hostId, tableKey, cols, rerender) {
+  const host = $(hostId);
+  const trigger = (target) => {
+    const th = target.closest("th[data-sort]");
+    if (th) cycleSort(tableKey, cols, th.dataset.sort, rerender);
+  };
+  host.addEventListener("click", (e) => trigger(e.target));
+  host.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      const th = e.target.closest?.("th[data-sort]");
+      if (th) {
+        e.preventDefault();
+        cycleSort(tableKey, cols, th.dataset.sort, rerender);
+      }
+    }
+  });
 }
 
 function epLabel(r) {
@@ -692,6 +1001,17 @@ function renderDiscConfidence(dist) {
   animateBars(host);
 }
 
+const DISC_SHOW_COLS = [
+  {
+    key: "name",
+    label: "Show",
+    get: (s, ctx) => (ctx?.names?.[s.tmdb_id] || `tmdb:${s.tmdb_id}`).toLowerCase(),
+  },
+  { key: "discs", label: "Discs", num: true, get: (s) => s.discs },
+  { key: "contributions", label: "Contrib", num: true, get: (s) => s.contributions },
+  { key: "contributors", label: "People", num: true, get: (s) => s.contributors },
+];
+
 // Top contributed shows by disc count. Reuses showCell so disc shows pick up the
 // same TMDB name resolution as the episode TOP SHOWS table.
 function renderDiscShows(shows, names) {
@@ -700,7 +1020,8 @@ function renderDiscShows(shows, names) {
     host.replaceChildren(el("div", "empty-state", "no disc contributions yet"));
     return;
   }
-  const rows = shows
+  const sorted = applySort(shows, "discShows", DISC_SHOW_COLS, { names });
+  const rows = sorted
     .map(
       (s) =>
         "<tr>" +
@@ -712,13 +1033,7 @@ function renderDiscShows(shows, names) {
     )
     .join("");
   host.replaceChildren(
-    el(
-      "table",
-      null,
-      "<thead><tr>" +
-        '<th>Show</th><th class="num">Discs</th><th class="num">Contrib</th><th class="num">People</th>' +
-        `</tr></thead><tbody>${rows}</tbody>`,
-    ),
+    el("table", null, `${sortableHead("discShows", DISC_SHOW_COLS)}<tbody>${rows}</tbody>`),
   );
 }
 
@@ -1038,6 +1353,18 @@ function init() {
     b.classList.toggle("active", b.dataset.mode === state.growthMode);
     b.addEventListener("click", () => setGrowthMode(b.dataset.mode));
   }
+  for (const b of $("growthRange").children) {
+    b.classList.toggle("active", b.dataset.range === state.growthRange);
+    b.addEventListener("click", () => setGrowthRange(b.dataset.range));
+  }
+  // Legend toggles + hover cursor: both delegated on stable parents so they
+  // survive renderGrowth repainting the legend and chart on every refresh.
+  $("growthLegend").addEventListener("click", (e) => {
+    const btn = e.target.closest(".lg-toggle");
+    if (btn) toggleGrowthSeries(btn.dataset.key);
+  });
+  $("growthChart").addEventListener("pointermove", (e) => moveGrowthCursor(e.clientX));
+  $("growthChart").addEventListener("pointerleave", hideGrowthCursor);
   for (const b of $("browserMode").children) {
     b.addEventListener("click", () => setBrowserMode(b.dataset.bmode));
   }
@@ -1045,6 +1372,21 @@ function init() {
   $("showsTable").addEventListener("click", (e) => {
     const tr = e.target.closest(".row-click");
     if (tr?.dataset.tmdb) onShowRowClick(Number(tr.dataset.tmdb));
+  });
+  // Sortable hero tables — re-render from the last payload so a background refresh
+  // keeps the chosen ordering. TOP SHOWS also honours the free-text filter.
+  wireSort("showsTable", "shows", SHOW_COLS, () => {
+    if (state.lastData) renderShows(state.lastData.topShows, state.lastData.names);
+  });
+  wireSort("contributorsTable", "contributors", CONTRIB_COLS, () => {
+    if (state.lastData) renderContributors(state.lastData.topContributors);
+  });
+  wireSort("discShowsTable", "discShows", DISC_SHOW_COLS, () => {
+    if (state.lastData) renderDiscShows(state.lastData.disc.topShows, state.lastData.names);
+  });
+  $("showsFilter").addEventListener("input", (e) => {
+    state.showsFilter = e.target.value;
+    if (state.lastData) renderShows(state.lastData.topShows, state.lastData.names);
   });
 
   $("footerSource").textContent = state.source.toUpperCase();
