@@ -103,23 +103,6 @@ FROM contribution
 ORDER BY received_at DESC
 LIMIT 25;
 
--- [17] contributions in the last 30 days by ingress host (domain-migration drain gauge)
--- 2592000 = 30 * 24 * 60 * 60 seconds. ingress_host is NULL for rows predating
--- migration 002; those group under a single NULL bucket.
-SELECT ingress_host, COUNT(*) AS n
-FROM contribution
-WHERE received_at >= unixepoch() - 2592000
-GROUP BY ingress_host
-ORDER BY n DESC;
-
--- [18] distinct active contributors in the last 30 days by ingress host — the key
--- retirement signal: how many people still ride the legacy *.workers.dev host.
-SELECT ingress_host, COUNT(DISTINCT pseudonym) AS n
-FROM contribution
-WHERE received_at >= unixepoch() - 2592000
-GROUP BY ingress_host
-ORDER BY n DESC;
-
 -- ===========================================================================
 -- Disc-hash recognition (migration 003). disc_contribution is raw per-pseudonym
 -- disc-layout intake; disc_canonical is the promoted aggregate (one row per disc
@@ -127,18 +110,18 @@ ORDER BY n DESC;
 -- panels. See src/workers/disc_promotion.ts for how the tiers are derived.
 -- ===========================================================================
 
--- [19] total raw disc contributions
+-- [17] total raw disc contributions
 SELECT COUNT(*) AS n FROM disc_contribution;
 
--- [20] distinct discs seen (a disc content hash is stable per pressed release, so
+-- [18] distinct discs seen (a disc content hash is stable per pressed release, so
 -- many contributions collapse onto one hash)
 SELECT COUNT(DISTINCT disc_content_hash) AS n FROM disc_contribution;
 
--- [21] promoted discs by tier — candidate (1 contributor) / confirmed (2+) /
+-- [19] promoted discs by tier — candidate (1 contributor) / confirmed (2+) /
 -- canonical (3+ · conf >= .85). Thresholds live in src/workers/disc_promotion.ts.
 SELECT tier, COUNT(*) AS n FROM disc_canonical GROUP BY tier;
 
--- [22] mean-confidence distribution across disc_canonical, as 0.05-wide histogram
+-- [20] mean-confidence distribution across disc_canonical, as 0.05-wide histogram
 -- buckets. bucket = floor(mean_confidence * 20), clamped to 19 so a perfect 1.0
 -- folds into the top [0.95, 1.00] bin instead of spilling into a 21st bucket.
 -- Promotion requires mean_confidence >= 0.70, so buckets start at 14 in practice.
@@ -147,7 +130,7 @@ FROM disc_canonical
 GROUP BY bucket
 ORDER BY bucket;
 
--- [23] top contributed shows by disc count — distinct discs and raw contributions
+-- [21] top contributed shows by disc count — distinct discs and raw contributions
 -- per show, plus distinct contributors. tmdb_id reuses the dashboard's TMDB
 -- name lookup (same as the episode TOP SHOWS panel).
 SELECT
@@ -159,3 +142,18 @@ FROM disc_contribution
 GROUP BY tmdb_id
 ORDER BY discs DESC, contributions DESC
 LIMIT 20;
+
+-- [22] graduated-trust signal: activity from FLAGGED contributors. Since PR #54
+-- flagged contributors are no longer permabanned — they keep submitting through
+-- the normal anti-poison screen, but their evidence needs independent
+-- corroboration to reach canonical. This proves they stay productive: total
+-- submissions from flagged pseudonyms, how many cleared the anti-poison screen
+-- (poison_check = 'pass'), and how many have been promoted. A catalog with no
+-- flagged contributors returns a single all-zero row (COALESCE guards the SUMs).
+SELECT
+  COUNT(*) AS total,
+  COALESCE(SUM(CASE WHEN c.poison_check = 'pass' THEN 1 ELSE 0 END), 0) AS passed,
+  COALESCE(SUM(CASE WHEN c.promoted_at IS NOT NULL THEN 1 ELSE 0 END), 0) AS promoted
+FROM contribution c
+JOIN contributor u ON u.pseudonym = c.pseudonym
+WHERE u.flagged = 1;

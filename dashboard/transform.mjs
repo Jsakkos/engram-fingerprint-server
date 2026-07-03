@@ -25,13 +25,12 @@ export const QUERY_MAP = [
   "topShows", // [14]
   "topContributors", // [15]
   "recentContributions", // [16]
-  "ingressContributionsByHost", // [17]
-  "ingressContributorsByHost", // [18]
-  "discTotalContributions", // [19]
-  "discUniqueDiscs", // [20]
-  "discTierBreakdown", // [21]
-  "discConfidenceDist", // [22]
-  "discTopShows", // [23]
+  "discTotalContributions", // [17]
+  "discUniqueDiscs", // [18]
+  "discTierBreakdown", // [19]
+  "discConfidenceDist", // [20]
+  "discTopShows", // [21]
+  "flaggedActivity", // [22]
 ];
 
 export function parseWranglerJson(stdout) {
@@ -124,41 +123,15 @@ function mapShowRow(r) {
   };
 }
 
-// Merge the last-30-day "contributions by host" and "distinct contributors by
-// host" result sets into one per-host row, sorted by contribution volume. This
-// is the domain-migration drain gauge: `legacy` marks *.workers.dev hosts, whose
-// distinct-contributor count must reach ~0 before the old preview host is
-// retired. A null host (rows predating migration 002's ingress_host column) is
-// reported as-is rather than dropped.
-function mergeIngressHosts(contributionSet, contributorSet) {
-  const byHost = new Map();
-  const ensure = (host) => {
-    // A Map keys on null directly, so no string sentinel is needed; normalise
-    // undefined -> null so both fold into one bucket.
-    const key = host ?? null;
-    let row = byHost.get(key);
-    if (!row) {
-      row = {
-        host: key,
-        contributions: 0,
-        contributors: 0,
-        legacy: typeof key === "string" && key.endsWith(".workers.dev"),
-      };
-      byHost.set(key, row);
-    }
-    return row;
-  };
-  for (const r of contributionSet ?? []) ensure(r.ingress_host).contributions = num(r.n);
-  for (const r of contributorSet ?? []) ensure(r.ingress_host).contributors = num(r.n);
-  return [...byHost.values()].sort((a, b) => b.contributions - a.contributions);
-}
-
 export function shapePayload(sets) {
   const get = (name) => sets[QUERY_MAP.indexOf(name)] ?? [];
 
   const tiers = groupToMap(get("tierBreakdown"), "tier");
   const discTiers = groupToMap(get("discTierBreakdown"), "tier");
   const overlap = get("overlapStats")[0] ?? {};
+  // Graduated-trust readout: one aggregate row (total/passed/promoted) for
+  // submissions from flagged contributors. Absent/empty set -> all-zero.
+  const flagged = get("flaggedActivity")[0] ?? {};
 
   return {
     totals: {
@@ -218,10 +191,14 @@ export function shapePayload(sets) {
       poison_check: r.poison_check,
       promoted: r.promoted_at != null,
     })),
-    ingressHosts: mergeIngressHosts(
-      get("ingressContributionsByHost"),
-      get("ingressContributorsByHost"),
-    ),
+    // Since PR #54, flagged contributors keep submitting (no more permaban) but
+    // their evidence needs corroboration to reach canonical. total/passed/promoted
+    // shows they stay productive; the UI derives a pass-rate from passed/total.
+    flaggedActivity: {
+      total: num(flagged.total),
+      passed: num(flagged.passed),
+      promoted: num(flagged.promoted),
+    },
     // Disc-hash recognition (migration 003). Mirrors the episode shape above:
     // raw-intake totals, a per-tier promoted breakdown, a mean-confidence
     // histogram, and a top-shows-by-disc table. Every field defaults to empty/zero

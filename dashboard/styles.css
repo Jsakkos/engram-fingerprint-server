@@ -378,6 +378,11 @@ body::before {
 .error-icon {
   color: var(--red);
 }
+/* `display: flex` above overrides the [hidden] UA rule, so re-hide explicitly —
+   otherwise an empty banner sits at the top of the page whenever there's no error. */
+.error-banner[hidden] {
+  display: none;
+}
 
 main {
   position: relative;
@@ -416,6 +421,10 @@ main {
   opacity: 0;
   transform: translateY(10px);
   animation: rise 0.5s ease forwards;
+  /* Let a panel shrink below its content's intrinsic width so a wide table (in an
+     overflow-x:auto wrap) scrolls instead of stretching the grid track past the
+     viewport on narrow screens. */
+  min-width: 0;
 }
 .panel::before,
 .panel::after {
@@ -504,11 +513,25 @@ main {
   color: var(--text-dim);
   margin-top: 4px;
 }
-.tile.warn .tile-val {
-  color: var(--amber-bright);
+.tile-spark {
+  margin-top: 8px;
 }
-.tile.warn:hover .tile-val {
-  text-shadow: var(--glow-amber);
+.tile-spark:empty {
+  display: none;
+}
+.tile-spark-svg {
+  display: block;
+  width: 100%;
+  height: 24px;
+  opacity: 0.92;
+}
+.tile-delta {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .hero {
@@ -617,11 +640,95 @@ main {
 
 .chart-wrap {
   width: 100%;
+  position: relative;
+  touch-action: none;
 }
 .chart-wrap svg {
   width: 100%;
   height: auto;
   display: block;
+}
+
+/* ---- growth chart hover cursor ---- */
+/* Overlay siblings of the SVG inside .chart-wrap, positioned in CSS pixels from
+   the live geometry the JS reads via getBoundingClientRect. */
+.gc-crosshair {
+  position: absolute;
+  top: 4%;
+  bottom: 10%;
+  width: 1px;
+  background: linear-gradient(180deg, transparent, var(--green) 12%, var(--green) 88%, transparent);
+  opacity: 0;
+  transform: translateX(-0.5px);
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+.gc-crosshair.on {
+  opacity: 0.7;
+}
+.gc-dots {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.gc-dot {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  border-radius: 50%;
+  border: 1.5px solid var(--bg);
+  box-shadow: 0 0 8px currentColor;
+}
+.gc-tooltip {
+  position: absolute;
+  top: 8px;
+  transform: translateX(14px);
+  min-width: 128px;
+  padding: 8px 10px;
+  background: rgba(6, 11, 8, 0.94);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  z-index: 3;
+}
+.gc-tooltip.on {
+  opacity: 1;
+}
+.gc-tooltip.flip {
+  transform: translateX(calc(-100% - 14px));
+}
+.gc-tip-day {
+  font-family: var(--font-display);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--green-bright);
+  margin-bottom: 5px;
+}
+.gc-tip-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  line-height: 1.7;
+}
+.gc-tip-sw {
+  width: 9px;
+  height: 3px;
+  border-radius: 2px;
+  flex: none;
+}
+.gc-tip-label {
+  color: var(--text-dim);
+}
+.gc-tip-val {
+  margin-left: auto;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
 }
 .grid-line {
   stroke: var(--grid);
@@ -664,10 +771,75 @@ main {
   color: var(--text-dim);
   letter-spacing: 0.06em;
 }
+/* Interactive legend toggles double as buttons: reset the UA chrome, keep them
+   feeling like part of the readout. `.off` dims a hidden series with a struck
+   swatch so the toggle state reads at a glance. */
+.legend .lg-toggle {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  font-family: var(--font-mono);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+  transition:
+    opacity 0.15s ease,
+    color 0.15s ease;
+}
+.legend .lg-toggle:hover {
+  color: var(--text);
+}
+.legend .lg-toggle.off {
+  opacity: 0.4;
+}
+.legend .lg-toggle.off .swatch {
+  position: relative;
+  filter: grayscale(0.7);
+}
+.legend .lg-toggle.off .swatch::after {
+  content: "";
+  position: absolute;
+  inset: -3px 0;
+  border-top: 1px solid var(--text-dim);
+  top: 50%;
+}
 .legend .swatch {
   width: 14px;
   height: 3px;
   border-radius: 2px;
+}
+
+.panel-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* Free-text filter in a panel head — CRT-styled search box. */
+.panel-filter {
+  appearance: none;
+  background: var(--panel-solid);
+  border: 1px solid var(--edge-soft);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  padding: 5px 10px;
+  width: min(42vw, 200px);
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+.panel-filter::placeholder {
+  color: var(--text-faint);
+  letter-spacing: 0.08em;
+}
+.panel-filter:focus {
+  outline: none;
+  border-color: var(--green);
+  box-shadow: 0 0 0 1px rgba(124, 255, 178, 0.25);
 }
 .chart-note {
   margin-top: 6px;
@@ -854,6 +1026,71 @@ main {
 .pstat.ok .pv {
   color: var(--green);
 }
+.pstat .pv.amber {
+  color: var(--amber-bright);
+}
+.pstat .pv.ok {
+  color: var(--green);
+}
+.pnote {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  margin-top: 3px;
+}
+
+/* ---- integrity panel (anti-poison screen + graduated-trust story) ---- */
+.integrity {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px 26px;
+}
+.integrity-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+/* A hairline-ruled section heading separates the screen from the trust story. */
+.integrity-h {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--green);
+  padding-bottom: 7px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--edge-soft);
+}
+.integrity .pstat.wide {
+  margin-top: auto;
+}
+.trust-copy {
+  margin: 0 0 14px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+.trust-copy b {
+  color: var(--text);
+  font-weight: 600;
+}
+.trust-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-top: auto;
+}
+.trust-stats .pstat {
+  padding: 9px 10px;
+}
+.trust-clear {
+  margin-top: auto;
+  padding: 14px;
+  border: 1px dashed var(--edge-soft);
+  border-radius: var(--radius);
+  font-size: 11.5px;
+  color: var(--green-dim);
+  text-align: center;
+}
 
 .table-wrap {
   overflow-x: auto;
@@ -935,9 +1172,36 @@ th.num {
 .badge.flag {
   color: var(--red);
 }
+/* Post-#54: a flag limits trust, it doesn't ban — amber, not red. */
+.badge.trust {
+  color: var(--amber);
+  cursor: help;
+}
 .badge.ok {
   color: var(--green-dim);
   border-color: var(--edge-soft);
+}
+
+/* ---- sortable table headers ---- */
+th.sortable {
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.15s ease;
+}
+th.sortable:hover {
+  color: var(--text-dim);
+}
+th.sortable.sorted {
+  color: var(--green);
+}
+.sort-arrow {
+  margin-left: 5px;
+  font-size: 8px;
+  opacity: 0.35;
+  vertical-align: middle;
+}
+th.sortable.sorted .sort-arrow {
+  opacity: 1;
 }
 
 .feed {
@@ -1268,6 +1532,17 @@ th.num {
   cursor: pointer;
 }
 
+/* Keyboard focus: a crisp phosphor ring on every interactive control, without
+   touching mouse-focus (which stays chrome-free via :focus-visible). */
+:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+.panel-filter:focus-visible {
+  outline-offset: 0;
+}
+
 @media (max-width: 1100px) {
   .grid {
     grid-template-columns: repeat(2, 1fr);
@@ -1298,6 +1573,20 @@ th.num {
   .feed-src,
   .feed-tag {
     display: none;
+  }
+  /* Stack the integrity halves and drop the tile sparklines' extra height. */
+  .integrity {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+  .panel-head {
+    flex-wrap: wrap;
+  }
+  .panel-controls {
+    gap: 8px;
+  }
+  .panel-filter {
+    width: 100%;
   }
 }
 
